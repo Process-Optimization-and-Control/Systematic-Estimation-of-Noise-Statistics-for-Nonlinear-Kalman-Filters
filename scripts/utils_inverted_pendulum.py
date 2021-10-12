@@ -8,7 +8,7 @@ import numpy as np
 import scipy.stats
 #Self-written modules
 import sigma_points_classes as spc
-import unscented_transform as ut
+import unscented_transformation as ut
 import matplotlib.pyplot as plt
 
 def ode_model_plant(x, t, u, par, sin_fx = None, cos_fx = None):

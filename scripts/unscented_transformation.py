@@ -6,7 +6,7 @@ Created on Fri Oct  8 12:27:50 2021
 """
 import numpy as np
 
-def unscented_transform(sigmas, w, fx = None):
+def unscented_transformation(sigmas, w, fx = None):
     """
     Calculates mean and covariance of a nonlinear function by the unscented transform. Every sigma point is propagated through the function, and combined with their weights the mean and covariance is calculated.
 
