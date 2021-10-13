@@ -11,12 +11,16 @@ import sigma_points_classes as spc
 import unscented_transformation as ut
 import matplotlib.pyplot as plt
 
-def ode_model_plant(x, t, u, par, sin_fx = None, cos_fx = None):
+def ode_model_plant(t, x, par, u = None, sin_fx = None, cos_fx = None):
+    
+    # print(f"u: {u}\n",
+    #       f"sin: {sin_fx}")
     if sin_fx is None:
         sin_fx = np.sin
     
     if cos_fx is None:
         cos_fx = np.cos
+    
     
     #Unpack states and parameters
     d, d_dot, theta, theta_dot = x
@@ -27,6 +31,9 @@ def ode_model_plant(x, t, u, par, sin_fx = None, cos_fx = None):
     l = par["l"]
     r = par["r"]
     J = np.multiply(m, np.square(r))/2
+    
+    if u is None:
+        u = 40*theta #Control law
     
     #Allocate space and write the model
     x_dot = np.zeros(x.shape)
@@ -42,6 +49,15 @@ def ode_model_plant(x, t, u, par, sin_fx = None, cos_fx = None):
     
     return x_dot
 
+def fx_ukf_ode(ode_model, t_span, x0, args_ode = None, args_solver = {}):
+    res = scipy.integrate.solve_ivp(ode_model,
+                                    t_span,
+                                    x0,
+                                    args = args_ode,
+                                    **args_solver)
+    x_all = res.y
+    x_final = x_all[:, -1]
+    return x_final
 def get_x0_inverted_pendulum():
     x0 = np.array([0., # d [rad] 
                    0., # d_dot [rad/s]
@@ -61,7 +77,12 @@ def get_nominal_values():
                }
     
     #Kalman filter values in the description
-    Q = np.diag([0., 4e-4, 0., 4e-2])
+    Q = np.diag([0., 4e-4, 0., 4e-2]) #as in Dan Simon's exercise text
+    #Can try different Q-values
+    # Q = np.diag([0., 4e-4, 0., 4e-4]) 
+    Q = np.eye(4)*1e-3
+    
+    #Measurement noise
     R = np.square(.1) #[m^2]
     
     return par_nom, Q, R
@@ -108,10 +129,10 @@ def uncertainty_venturi():
     eps = 1.
     C = 1.01 #[-]
     fx = lambda x: venturi_eq(q, x[0], x[1], D, C, eps)
-    mean_ut, var_ut = ut.unscented_transform(sigmas_g, w, fx = fx)
+    mean_ut, var_ut = ut.unscented_transformation(sigmas_g, w, fx = fx)
     
     #Monte Carlo simulation
-    N_mc = [int(1e2), int(5e2), int(1e3), int(2e3), int(5e3), int(1e4), int(1e5), int(5e5), int(1e6)]#, int(5e6)]#, int(1e7)]
+    N_mc = [int(1e2), int(5e2), int(1e3), int(2e3), int(5e3), int(1e4), int(1e5), int(5e5), int(1e6), int(5e6)]#, int(1e7)]
     mean_mc = np.zeros(len(N_mc))
     var_mc = np.zeros(len(N_mc))
     for i in range(len(N_mc)):
