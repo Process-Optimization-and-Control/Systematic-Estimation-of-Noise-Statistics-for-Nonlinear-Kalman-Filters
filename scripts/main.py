@@ -18,7 +18,7 @@ import matplotlib.transforms as plt_transforms
 
 # Did some modification to these packages
 from myFilter import UKF
-from myFilter import sigma_points
+from myFilter import sigma_points as ukf_sp
 # from myFilter import UKF_constrained
 
 #Self-written modules
@@ -34,57 +34,99 @@ x0 = utils_ip.get_x0_inverted_pendulum()
 dim_x = x0.shape[0]
 dt_y = 5e-3 # [s] <=> 5 ms. Measurement frequency
 dt = 1e-4 #[s] - discretization time for integration
-t = np.linspace(0,2, int(2/dt), endpoint = True)
-dim_t = t.shape[0]
-dim_y = int(np.ceil((t[-1] - t[0]) / dt_y) + 1)
-t_y = np.linspace(t[0], t[-1], dim_y)
-x_true = np.zeros((dim_x, dim_t))
-x_post = np.zeros((dim_x, dim_t))
-u = np.zeros(dim_t)
-u_kf = np.zeros(dim_t)
-x_true[:, 0] = x0
-u[0] = 40*x_true[2, 0] # x_true[2,:] is theta
+
+t_end = 2
+t_y = np.linspace(0, t_end, int(t_end/dt_y))
+# t = np.linspace(t_y[0],t_y[0+1], int(dt_y/dt), endpoint = True)
+
+dim_ty = t_y.shape[0]
+dim_y = 1#t_y.shape[0]
+
+x_true = [[] for _ in range(dim_ty-1)] #make a list of list
+t = [[] for _ in range(dim_ty-1)] #make a list of list
+x_post = np.zeros((dim_x, dim_ty))
+x_post[:, 0] = x0
 #%% Simulate plant and measurements
 
-points = sigma_points.JulierSigmaPoints(dim_x,
-                                        kappa = 3-dim_x)
-x_post[:, 0] = x0 #know initial state perfectly
+t_span = (t_y[0],t_y[1])
+points = ukf_sp.JulierSigmaPoints(dim_x,
+                                  kappa = 0)#3-dim_x)
+fx_ukf = lambda x, dt_kf: utils_ip.fx_ukf_ode(utils_ip.ode_model_plant, 
+                                             t_span, 
+                                             x,
+                                             args_ode = (par,)
+                                             )
 kf = UKF.UnscentedKalmanFilter(dim_x = dim_x, 
-                               dim_z = dim_y, 
-                               dt = dt, 
-                               hx = lambda x: x[0], 
-                               fx = lambda x: utils_ip.ode_model_plant(x, t, u[0], par)* dt,
-                               points = points)
-
+                                dim_z = dim_y, 
+                                dt = 100, 
+                                hx = lambda x: np.array([x[0]]), 
+                                fx = fx_ukf,
+                                points = points)
+kf.x = x_post[:, 0]
+kf.P = np.diag([1e-4,#1e-4 corresponds to std of 0,01m <=> 1 cm
+                1e-8, #no uncertainty in velocty
+                1e-3, #In radians.  1e-3 corresponds to 1,8deg in standard deviations, np.rad2deg(np.sqrt(1e-3))
+                1e-8])
+kf.Q = Q_nom
+kf.R = R_nom
 #Generate measurement vectors
-v = np.random.normal(loc = 0, scale = np.sqrt(R_nom), size = dim_y) #white noise
+v = np.random.normal(loc = 0, scale = np.sqrt(R_nom), size = dim_ty) #white noise
 y = v #initialize y with measurement noise
-y[0] += x_true[0, 0]
-k = 1
-for i in range(1, dim_t):
-    dxdt = utils_ip.ode_model_plant(x_true[:, i-1], t, u[i-1], par)
-    x_true[:, i] = x_true[:, i-1] + dxdt*dt
-    u[i] = 40*x_true[2, i]
-    if t[i] >= t_y[k]: #we got now a new measurement
-        y[k] += x_true[0, i] # measures d. The noise is already added
-        k += 1
-
-
-
+y[0] += x0[0]
+for i in range(1,dim_ty):
+    t_span = (t_y[i-1],t_y[i])
+    res = scipy.integrate.solve_ivp(utils_ip.ode_model_plant, 
+                                    t_span,#(t_y[i-1],t_y[i]), 
+                                    x0, 
+                                    # rtol = 1e-10,
+                                    # atol = 1e-13
+                                    args = (par,)
+                                    )
+    t[i-1] = res.t #add integration time to the list
+    x_true[i-1] = res.y #add the interval to the full list
+    
+    #Prediction step of kalman filter
+    fx_ukf = lambda x, dt_kf: utils_ip.fx_ukf_ode(utils_ip.ode_model_plant, 
+                                             t_span, 
+                                             x,
+                                             args_ode = (par,
+                                                         None #control law for u. If None, it follows u = 40*x_kf[0]
+                                                         # lambda theta: 0.,#sin_fx
+                                                         # lambda theta: 1. #cos_fx
+                                                         )
+                                             )
+    kf.predict(fx = fx_ukf)
+    
+    #Get measurement
+    x0 = res.y[:, -1] #starting point for next integration interval
+    y[i] += x0[0] #add the measurement
+    
+    #Correction step of UKF
+    kf.update(np.array([y[i]]))
+    x_post[:, i] = kf.x
+    
+# Gather the results in a single np.array()
+x_true = np.hstack(x_true) #hstack is semi-expensive, do this only once at the end
+t = np.hstack(t)
+dim_t = t.shape[0]
 
 #%% Plot
-x_true[2:,:] = np.rad2deg(x_true[2:,:])
+use_rad = True
+if use_rad:
+    ylabels = ["d [m]", r"$\dot{d}$ [m/s]", r"$\theta$ [rad]", r"$\dot{\theta}$ [rad/s]"]
+else: #use degrees
+    x_true[2:,:] = np.rad2deg(x_true[2:,:])
+    x_post[2:, :] = np.rad2deg(x_post[2:, :])
+    ylabels= ["d [m]", r"$\dot{d}$ [m/s]", r"$\theta$ [deg]", r"$\dot{\theta}$ [deg/s]"]
+    
 fig1, ax1 = plt.subplots(dim_x, 1, sharex = True)
-# ylabels_rad = ["d [rad]", r"$\dot{d}$ [rad/s]", r"$\theta$ [rad]", r"$\dot{\theta}$ [rad/s]"]
-ylabels_deg = ["d [m]", r"$\dot{d}$ [m/s]", r"$\theta$ [deg]", r"$\dot{\theta}$ [deg/s]"]
-ylabels = ylabels_deg
-
-for i in range(dim_x):
+for i in range(dim_x): #plot true states and ukf's estimates
     ax1[i].plot(t, x_true[i, :], label = "True")
+    ax1[i].plot(t_y, x_post[i, :], label = "UKF")
     ax1[i].set_ylabel(ylabels[i])
 ax1[-1].set_xlabel("Time [s]")
-
 #Plot measurements
 ax1[0].plot(t_y, y, marker = "x", markersize = 3, linewidth = 0, label = "y")
+
 ax1[0].legend()
     
