@@ -63,9 +63,9 @@ kf = UKF.UnscentedKalmanFilter(dim_x = dim_x,
                                 fx = fx_ukf,
                                 points = points)
 kf.x = x_post[:, 0]
-kf.P = np.diag([1e-4,#corresponds to std of 0,01m <=> 1 cm
+kf.P = np.diag([1e-4,#1e-4 corresponds to std of 0,01m <=> 1 cm
                 1e-8, #no uncertainty in velocty
-                1e-3, #In radians. Corresponds to 1,8deg in standard deviations, np.rad2deg(np.sqrt(1e-3))
+                1e-3, #In radians.  1e-3 corresponds to 1,8deg in standard deviations, np.rad2deg(np.sqrt(1e-3))
                 1e-8])
 kf.Q = Q_nom
 kf.R = R_nom
@@ -91,6 +91,8 @@ for i in range(1,dim_ty):
                                              x,
                                              args_ode = (par,
                                                          None #control law for u. If None, it follows u = 40*x_kf[0]
+                                                         # lambda theta: 0.,#sin_fx
+                                                         # lambda theta: 1. #cos_fx
                                                          )
                                              )
     kf.predict(fx = fx_ukf)
@@ -102,6 +104,8 @@ for i in range(1,dim_ty):
     #Correction step of UKF
     kf.update(np.array([y[i]]))
     x_post[:, i] = kf.x
+    
+# Gather the results in a single np.array()
 x_true = np.hstack(x_true) #hstack is semi-expensive, do this only once at the end
 t = np.hstack(t)
 dim_t = t.shape[0]
