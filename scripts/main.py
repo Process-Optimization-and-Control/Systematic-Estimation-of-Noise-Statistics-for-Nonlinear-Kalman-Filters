@@ -100,7 +100,7 @@ for i in range(1,dim_ty):
     #Get measurement
     x0 = res.y[:, -1] #starting point for next integration interval
     y[i] += x0[0] #add the measurement
-    
+
     #Correction step of UKF
     kf.update(np.array([y[i]]))
     x_post[:, i] = kf.x
