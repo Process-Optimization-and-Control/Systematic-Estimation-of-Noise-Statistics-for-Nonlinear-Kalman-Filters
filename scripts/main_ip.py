@@ -58,7 +58,7 @@ dim_x = x0.shape[0]
 dt_y = 5e-3 # [s] <=> 5 ms. Measurement frequency
 dt = 1e-4 #[s] - discretization time for integration
 
-t_end = 20
+t_end = 2#30
 t_y = np.linspace(0, t_end, int(t_end/dt_y))
 # t = np.linspace(t_y[0],t_y[0+1], int(dt_y/dt), endpoint = True)
 
@@ -81,9 +81,8 @@ mean_ut, Q_ut = ut.unscented_transformation(sigmas, w, fx = fx_gen_Q)
 
 #%% Simulate plant and measurements
 
-t_span = (t_y[0],t_y[1])
 points = ukf_sp.JulierSigmaPoints(dim_x,
-                                  kappa = 0)#3-dim_x)
+                                  kappa = 3-dim_x)
 fx_ukf = lambda x, dt_kf: utils_ip.fx_ukf_ode(utils_ip.ode_model_plant, 
                                              t_span, 
                                              x,
@@ -101,12 +100,15 @@ kf.P = np.diag([1e-4,#1e-4 corresponds to std of 0,01m <=> 1 cm
                 1e-3, #In radians.  1e-3 corresponds to 1,8deg in standard deviations, np.rad2deg(np.sqrt(1e-3))
                 1e-8])
 kf.Q = Q_nom
-# kf.Q = Q_ut
+kf.Q = Q_ut
 kf.R = R_nom
 #Generate measurement vectors
 v = np.random.normal(loc = 0, scale = np.sqrt(R_nom), size = dim_ty) #white noise
 y = v #initialize y with measurement noise
 y[0] += x0[0]
+
+#Try to reset Q to Q_nom k times after t = 10 s
+k = 0
 for i in range(1,dim_ty):
     t_span = (t_y[i-1],t_y[i])
     res = scipy.integrate.solve_ivp(utils_ip.ode_model_plant, 
@@ -130,8 +132,13 @@ for i in range(1,dim_ty):
                                                          )
                                              )
     fx_gen_Q = lambda si: utils_ip.fx_for_UT_gen_Q(si, list_dist_keys, t_span, x_post[:, i-1], par_kf)
-    mean_ut, Q_ut = ut.unscented_transformation(sigmas, w, fx = fx_gen_Q)
-    # kf.Q = Q_ut
+    
+    if (t_y[i] >= 10) and (k < 10):
+        kf.Q = Q_nom
+        k += 1
+    else:
+        mean_ut, Q_ut = ut.unscented_transformation(sigmas, w, fx = fx_gen_Q)
+        kf.Q = Q_ut
     
     kf.predict(fx = fx_ukf)
     

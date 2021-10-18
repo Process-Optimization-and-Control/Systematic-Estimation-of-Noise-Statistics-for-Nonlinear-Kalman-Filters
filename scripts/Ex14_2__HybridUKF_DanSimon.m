@@ -1,4 +1,4 @@
-function HybridUKF
+
 
 % Hybrid extended Kalman filter example.
 % Track a body falling through the atmosphere.
@@ -31,7 +31,7 @@ Parray = diag(P);
 Pukfarray = diag(Pukf);
 
 W = ones(6,1) / 6; % UKF weights
-
+z_array = [];
 for t = T : T : tf
    % Simulate the system.
    for tau = dt : dt : T
@@ -43,6 +43,7 @@ for t = T : T : tf
    end
    % Simulate the noisy measurement.
    z = sqrt(M^2 + (x(1)-a)^2) + sqrt(R) * randn;
+   z_array = [z_array, z];
    % Simulate the continuous-time part of the Kalman filter (time update).
    for tau = dt : dt : T
       xhatdot(1,1) = xhat(2);
@@ -152,13 +153,35 @@ legend('Kalman filter', 'Unscented filter');
 
 figure;
 plot(t, xArray(1,:));
+hold;
+plot(t, xhatukfArray(1,:))
 set(gca,'FontSize',12); set(gcf,'Color','White');
 xlabel('Seconds');
 ylabel('True Position');
 
 figure;
 plot(t, xArray(2,:));
+hold;
+plot(t, xhatukfArray(2,:))
 title('Falling Body Simulation', 'FontSize', 12);
 set(gca,'FontSize',12); set(gcf,'Color','White');
 xlabel('Seconds');
 ylabel('True Velocity');
+
+
+figure;
+plot(t, xArray(3,:));
+hold;
+plot(t, xhatukfArray(3,:))
+title('Falling Body Simulation', 'FontSize', 12);
+set(gca,'FontSize',12); set(gcf,'Color','White');
+xlabel('Seconds');
+ylabel('Ballistic coefficient');
+
+
+figure;
+plot(t(2:end), z_array);
+title('Measurement', 'FontSize', 12);
+set(gca,'FontSize',12); set(gcf,'Color','White');
+xlabel('Seconds');
+ylabel('Measurement');
