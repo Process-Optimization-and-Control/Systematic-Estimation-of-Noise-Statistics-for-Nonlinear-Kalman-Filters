@@ -25,7 +25,7 @@ def ode_model_plant(t, x, w, par):
     #Allocate space and write the model
     x_dot = np.zeros(x.shape)
     x_dot[0] = x[1] + w[0]
-    x_dot[1] = rho_0 * np.exp(-x[0] / k) * np.square(x[1]) * x[2]/1e6 / 2 - g + w[1]
+    x_dot[1] = rho_0 * np.exp(-x[0] / k) * np.square(x[1]) * x[2]/ 2 - g + w[1]
     x_dot[2] = w[2] #it is equal to w[2]
     return x_dot
 
@@ -63,7 +63,7 @@ def fx_ukf_ode(ode_model, t_span, x0, args_ode = None, args_solver = {}):
 def get_x0_literature():
     x0 = np.array([300e3,  
                    -20e3, 
-                   0.001*1e6 
+                   0.001 
                    ])
     return x0
 

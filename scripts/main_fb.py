@@ -107,7 +107,7 @@ kf = UKF.UnscentedKalmanFilter(dim_x = dim_x,
 kf.x = x_post[:, 0]
 kf.P = np.diag([1e6,#[ft^2], altitute
                 4e6, # [ft^2], horizontal range
-                1e6 # [?] ballistic coefficient
+                1e-8 # [?] ballistic coefficient
                 ])
 # kf.P = np.diag([1e6,#[ft^2], altitute
 #                 4e6, # [ft^2], horizontal range
