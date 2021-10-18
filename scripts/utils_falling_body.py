@@ -21,6 +21,7 @@ def ode_model_plant(t, x, w, par):
     g = par["g"]
     a = par["a"]
     k = par["k"]
+    
 
     #Allocate space and write the model
     x_dot = np.zeros(x.shape)

@@ -52,7 +52,7 @@ for key, dist in par_dist.items():
     par_kf[key] = dist.mean() #the ukf uses mean values reported in the literaure
 
     print(f"{key}_true/{key}_KF: {par_true[key]/par_kf[key]}")
-par_kf = copy.deepcopy(par_true)
+# par_kf = par_true
 #%% Define dimensions and initialize arrays
 sigmas, w = utils_fb.get_sigmapoints_and_weights(par_dist)
 
@@ -75,6 +75,8 @@ x_true = [[] for _ in range(dim_ty-1)] #make a list of list
 t = [[] for _ in range(dim_ty-1)] #make a list of list
 x_post = np.zeros((dim_x, dim_ty))
 x_post[:, 0] = x0
+x_post_qf = np.zeros((dim_x, dim_ty))
+x_post_qf[:, 0] = x0
 x_prior = np.zeros((dim_x, dim_ty))
 x_prior[:, 0] = x0
 t_span = (t_y[0],t_y[1])
@@ -89,7 +91,7 @@ v_kf = np.zeros(dim_y)
 
 #%% Define UKF - it uses Julier's sigma points
 points = ukf_sp.JulierSigmaPoints(dim_x,
-                                  kappa = 0)#3-dim_x)
+                                  kappa = 3-dim_x)
 fx_ukf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
                                              t_span, 
                                              x,
@@ -98,6 +100,7 @@ fx_ukf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant,
 
 hx_ukf = lambda x_in: utils_fb.hx(x_in, v_kf, par_kf)#.reshape(-1,1)
 
+#kf is where Q adapts based on UT of parametric uncertainty
 kf = UKF.UnscentedKalmanFilter(dim_x = dim_x, 
                                dim_z = dim_y, 
                                 dt = 100, 
@@ -116,6 +119,34 @@ kf.P = np.diag([1e6,#[ft^2], altitute
 kf.Q = Q_nom
 kf.R = R_nom
 
+#Make one filter where we have Q fixed
+points_qf = ukf_sp.JulierSigmaPoints(dim_x,
+                                  kappa = 3-dim_x)
+fx_ukf_qf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                             t_span, 
+                                             x,
+                                             args_ode = (w_kf,
+                                                         par_kf))
+
+hx_ukf_qf = lambda x_in: utils_fb.hx(x_in, v_kf, par_kf)#.reshape(-1,1)
+kf_qf = UKF.UnscentedKalmanFilter(dim_x = dim_x, 
+                                  dim_z = dim_y,
+                                  dt = 100, 
+                                  hx = hx_ukf_qf, 
+                                  fx = fx_ukf_qf, 
+                                  points = points_qf)
+kf_qf.x = x_post[:, 0]
+kf_qf.P = np.diag([1e6,#[ft^2], altitute
+                4e6, # [ft^2], horizontal range
+                1e-8 # [?] ballistic coefficient
+                ])
+# kf.P = np.diag([1e6,#[ft^2], altitute
+#                 4e6, # [ft^2], horizontal range
+#                 1e1 # [?] ballistic coefficient
+#                 ])
+kf_qf.Q = Q_nom
+kf_qf.R = R_nom
+
 
 #%% Get parametric uncertainty by GenUT
 sigmas, w = utils_fb.get_sigmapoints_and_weights(par_dist)
@@ -129,7 +160,7 @@ fx_gen_Q = lambda si: utils_fb.fx_for_UT_gen_Q(si,
 mean_ut, Q_ut = ut.unscented_transformation(sigmas, 
                                             w, 
                                             fx = fx_gen_Q)
-
+kf.Q = Q_ut
 #%% Simulate the plant and UKF
 for i in range(1,dim_ty):
     t_span = (t_y[i-1],t_y[i])
@@ -150,7 +181,13 @@ for i in range(1,dim_ty):
                                                   t_span, 
                                                   x,
                                                   args_ode = (w_kf,
-                                                              par_true)
+                                                              par_kf)
+                                                  )
+    fx_ukf_qf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                                  t_span, 
+                                                  x,
+                                                  args_ode = (w_kf,
+                                                              par_kf)
                                                   )
     fx_gen_Q = lambda si: utils_fb.fx_for_UT_gen_Q(si, 
                                                    list_dist_keys, 
@@ -159,9 +196,10 @@ for i in range(1,dim_ty):
                                                    par_kf,
                                                    w_kf)
     mean_ut, Q_ut = ut.unscented_transformation(sigmas, w, fx = fx_gen_Q)
-    # kf.Q = Q_ut
+    kf.Q = Q_ut
     
     kf.predict(fx = fx_ukf)
+    kf_qf.predict(fx = fx_ukf_qf)
     # print(f"pred: {kf.x}")
     #Get measurement
     x0 = res.y[:, -1] #starting point for next integration interval
@@ -170,10 +208,10 @@ for i in range(1,dim_ty):
     #Correction step of UKF
     
     kf.update(y[:, i], hx = hx_ukf)
-    # print(f"post: {kf.x}")
-    # kf.update(np.array([y[i]]))
+    kf_qf.update(y[:, i], hx = hx_ukf_qf)
     x_prior[:, i] = kf.x_prior
     x_post[:, i] = kf.x
+    x_post_qf[:, i] = kf_qf.x
     
 # Gather the results in a single np.array()
 x_true = np.hstack(x_true) #hstack is semi-expensive, do this only once at the end
@@ -187,7 +225,8 @@ fig1, ax1 = plt.subplots(dim_x + 1, 1, sharex = True)
 for i in range(dim_x): #plot true states and ukf's estimates
     ax1[i].plot(t, x_true[i, :], label = "True")
     ax1[i].plot(t_y, x_post[i, :], label = "UKF")
-    ax1[i].plot(t_y, x_prior[i, :], label = "UKF-prior")
+    ax1[i].plot(t_y, x_post_qf[i, :], label = "UKF_qf")
+    # ax1[i].plot(t_y, x_prior[i, :], label = "UKF-prior")
     ax1[i].set_ylabel(ylabels[i])
 ax1[-1].set_xlabel("Time [s]")
 #Plot measurements
