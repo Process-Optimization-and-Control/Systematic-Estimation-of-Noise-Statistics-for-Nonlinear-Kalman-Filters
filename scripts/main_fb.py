@@ -67,33 +67,34 @@ dt_y = .5 # [s] <=> 5 ms. Measurement frequency
 dt_int = 1e-3 #[s] - discretization time for integration
 
 t_end = 30
-t_y = np.linspace(0, t_end, int(t_end/dt_y))
+t = np.linspace(0, t_end, int(t_end/dt_y))
+dim_t = t.shape[0]
 # t = np.linspace(t_y[0],t_y[0+1], int(dt_y/dt), endpoint = True)
 
-dim_ty = t_y.shape[0]
 y0 = utils_fb.hx(x0, 0., par_true)
 dim_y = y0.shape[0]
-y = np.zeros((dim_y, dim_ty))
+y = np.zeros((dim_y, dim_t))
 y[:, 0] = y0
 
-x_true = [[] for _ in range(dim_ty-1)] #make a list of list
-x_ol = [[] for _ in range(dim_ty-1)] #Open loop simulation - same starting point and param as UKF
-t = [[] for _ in range(dim_ty-1)] #make a list of list
-t_ol = [[] for _ in range(dim_ty-1)] #have adaptive step size in scipy.integrate.solve_ivp(). Not guaranteed t == t_ol.
-x_post = np.zeros((dim_x, dim_ty))
+x_true = np.zeros((dim_x, dim_t)) #[[] for _ in range(dim_t-1)] #make a list of list
+x_ol = np.zeros((dim_x, dim_t)) #Open loop simulation - same starting point and param as UKF
+x_post = np.zeros((dim_x, dim_t))
+x_post_qf = np.zeros((dim_x, dim_t))
+# x_prior = np.zeros((dim_x, dim_ty))
+
+x_true[:, 0] = x0
 x_post[:, 0] = x0_kf
-x_post_qf = np.zeros((dim_x, dim_ty))
 x_post_qf[:, 0] = x0_kf
 x0_ol = copy.deepcopy(x0_kf)
-x_prior = np.zeros((dim_x, dim_ty))
-x_prior[:, 0] = x0_kf
-t_span = (t_y[0],t_y[1])
+x_ol[:, 0] = x0_ol
+# x_prior[:, 0] = x0_kf
+t_span = (t[0],t[1])
 
 #%% Create noise
-v = np.random.normal(loc = 0, scale = np.sqrt(R_nom), size = dim_ty) #white noise
+v = np.random.normal(loc = 0, scale = np.sqrt(R_nom), size = dim_t) #white noise
 w_plant = np.random.multivariate_normal(np.zeros((dim_x,)), 
                                         Q_nom, 
-                                        size = dim_ty)
+                                        size = dim_t)
 w_kf = np.zeros(dim_x)
 v_kf = np.zeros(dim_y)
 
@@ -167,30 +168,28 @@ mean_ut, Q_ut = ut.unscented_transformation(sigmas,
                                             fx = fx_gen_Q)
 kf.Q = Q_ut
 #%% Simulate the plant and UKF
-for i in range(1,dim_ty):
-    t_span = (t_y[i-1],t_y[i])
+for i in range(1,dim_t):
+    t_span = (t[i-1], t[i])
     w_plant_i = w_plant[i, :]
     res = scipy.integrate.solve_ivp(utils_fb.ode_model_plant, 
                                     t_span,#(t_y[i-1],t_y[i]), 
-                                    x0, 
+                                    x_true[:, i-1], 
                                     # rtol = 1e-10,
                                     # atol = 1e-13
                                     args = (w_plant_i, par_true)
                                     )
-    t[i-1] = res.t #add integration time to the list
-    x_true[i-1] = res.y #add the interval to the full list
+    # t[i-1] = res.t #add integration time to the list
+    x_true[:, i] = res.y[:, -1] #add the interval to the full list
     
     # Solve the open loop model prediction, based on the same info as UKF has (no measurement)
     res_ol = scipy.integrate.solve_ivp(utils_fb.ode_model_plant, 
                                        t_span,#(t_y[i-1],t_y[i]), 
-                                       x0_ol, 
+                                       x_ol[:, i-1], 
                                        # rtol = 1e-10,
                                        # atol = 1e-13
                                        args = (w_kf, par_kf)
                                        )
-    t_ol[i-1] = res_ol.t #add integration time to the list
-    x_ol[i-1] = res_ol.y #add the interval to the full list
-    x0_ol = res_ol.y[:, -1]
+    x_ol[:, i] = res_ol.y[:, -1] #add the interval to the full list
     
     #Prediction step of kalman filter
     fx_ukf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
@@ -218,24 +217,25 @@ for i in range(1,dim_ty):
     kf_qf.predict(fx = fx_ukf_qf)
     # print(f"pred: {kf.x}")
     #Get measurement
-    x0 = res.y[:, -1] #starting point for next integration interval
-    y[:, i] = utils_fb.hx(x0, v[i], par_true) #add the measurement
+    # x0 = res.y[:, -1] #starting point for next integration interval
+    y[:, i] = utils_fb.hx(x_true[:, i], v[i], par_true) #add the measurement
 
     #Correction step of UKF
-    
     kf.update(y[:, i], hx = hx_ukf)
     kf_qf.update(y[:, i], hx = hx_ukf_qf)
-    x_prior[:, i] = kf.x_prior
+    
+    # Save the estimates
+    # x_prior[:, i] = kf.x_prior
     x_post[:, i] = kf.x
     x_post_qf[:, i] = kf_qf.x
     
 # Gather the results in a single np.array()
-x_true = np.hstack(x_true) #hstack is semi-expensive, do this only once at the end
-t = np.hstack(t)
-dim_t = t.shape[0]
+# x_true = np.hstack(x_true) #hstack is semi-expensive, do this only once at the end
+# t = np.hstack(t)
+# dim_t = t.shape[0]
 
-x_ol = np.hstack(x_ol) #hstack is semi-expensive, do this only once at the end
-t_ol = np.hstack(t_ol)
+# x_ol = np.hstack(x_ol) #hstack is semi-expensive, do this only once at the end
+# t_ol = np.hstack(t_ol)
 
 #%% Plot
 ylabels = ["x1 [ft]", "x2 [ft/s]", "x3 []", "y []"]#
@@ -243,13 +243,20 @@ ylabels = ["x1 [ft]", "x2 [ft/s]", "x3 []", "y []"]#
 fig1, ax1 = plt.subplots(dim_x + 1, 1, sharex = True)
 for i in range(dim_x): #plot true states and ukf's estimates
     ax1[i].plot(t, x_true[i, :], label = "True")
-    ax1[i].plot(t_y, x_post[i, :], label = "UKF")
-    ax1[i].plot(t_y, x_post_qf[i, :], label = "UKF_qf")
-    ax1[i].plot(t_ol, x_ol[i, :], label = "OL")
+    ax1[i].plot(t, x_post[i, :], label = "UKF")
+    ax1[i].plot(t, x_post_qf[i, :], label = "UKF_qf")
+    ax1[i].plot(t, x_ol[i, :], label = "OL")
     # ax1[i].plot(t_y, x_prior[i, :], label = "UKF-prior")
     ax1[i].set_ylabel(ylabels[i])
 ax1[-1].set_xlabel("Time [s]")
 #Plot measurements
-ax1[-1].plot(t_y, y[0,:], marker = "x", markersize = 3, linewidth = 0, label = "y")
+ax1[-1].plot(t, y[0,:], marker = "x", markersize = 3, linewidth = 0, label = "y")
 ax1[-1].set_ylabel(ylabels[-1])
 ax1[0].legend()
+
+#%% Compute performnance index
+j_valappil = utils_fb.compute_performance_index_valappil(x_post, x_ol, x_true)
+j_valappil_qf = utils_fb.compute_performance_index_valappil(x_post_qf, x_ol, x_true)
+
+for i in range(dim_x):
+    print(f"{ylabels[i]}: Q-UT = {j_valappil[i]} and Q-fixed = {j_valappil_qf[i]}")

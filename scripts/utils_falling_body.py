@@ -89,6 +89,10 @@ def get_literature_values():
     
     return par_mean, Q, R
 
+def compute_performance_index_valappil(x_kf, x_ol, x_true):
+    J = np.divide(np.linalg.norm(x_kf - x_true, axis = 1, ord = 2),
+                  np.linalg.norm(x_ol - x_true, axis = 1, ord = 2))
+    return J
 
 def get_param_ukf_case1(std_dev_prct = 0.05, plot_dist = True):
     """
