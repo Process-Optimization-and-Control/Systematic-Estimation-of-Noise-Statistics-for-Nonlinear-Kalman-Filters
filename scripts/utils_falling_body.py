@@ -89,6 +89,7 @@ def get_literature_values():
     
     return par_mean, Q, R
 
+
 def get_param_ukf_case1(std_dev_prct = 0.05, plot_dist = True):
     """
     Generates gamma distributions for the parameters. Mean of gamma dist = par_mean from get_literature_values, and standard deviation of gamma dist = mean_literature*std_dev_prct

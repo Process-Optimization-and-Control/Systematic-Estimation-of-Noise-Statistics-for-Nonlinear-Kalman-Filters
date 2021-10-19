@@ -57,6 +57,11 @@ for key, dist in par_dist.items():
 sigmas, w = utils_fb.get_sigmapoints_and_weights(par_dist)
 
 x0 = utils_fb.get_x0_literature()
+P0 = np.diag([1e6,#[ft^2], altitute, initial covariance matrix for UKF
+            4e6, # [ft^2], horizontal range
+            1e-8 # [?] ballistic coefficient
+            ])
+x0_kf = copy.deepcopy(x0) + np.sqrt(np.diag(P0)) #+ the standard deviation
 dim_x = x0.shape[0]
 dt_y = .5 # [s] <=> 5 ms. Measurement frequency
 dt_int = 1e-3 #[s] - discretization time for integration
@@ -72,13 +77,16 @@ y = np.zeros((dim_y, dim_ty))
 y[:, 0] = y0
 
 x_true = [[] for _ in range(dim_ty-1)] #make a list of list
+x_ol = [[] for _ in range(dim_ty-1)] #Open loop simulation - same starting point and param as UKF
 t = [[] for _ in range(dim_ty-1)] #make a list of list
+t_ol = [[] for _ in range(dim_ty-1)] #have adaptive step size in scipy.integrate.solve_ivp(). Not guaranteed t == t_ol.
 x_post = np.zeros((dim_x, dim_ty))
-x_post[:, 0] = x0
+x_post[:, 0] = x0_kf
 x_post_qf = np.zeros((dim_x, dim_ty))
-x_post_qf[:, 0] = x0
+x_post_qf[:, 0] = x0_kf
+x0_ol = copy.deepcopy(x0_kf)
 x_prior = np.zeros((dim_x, dim_ty))
-x_prior[:, 0] = x0
+x_prior[:, 0] = x0_kf
 t_span = (t_y[0],t_y[1])
 
 #%% Create noise
@@ -108,10 +116,7 @@ kf = UKF.UnscentedKalmanFilter(dim_x = dim_x,
                                 fx = fx_ukf,
                                 points = points)
 kf.x = x_post[:, 0]
-kf.P = np.diag([1e6,#[ft^2], altitute
-                4e6, # [ft^2], horizontal range
-                1e-8 # [?] ballistic coefficient
-                ])
+kf.P = P0.copy()
 # kf.P = np.diag([1e6,#[ft^2], altitute
 #                 4e6, # [ft^2], horizontal range
 #                 1e1 # [?] ballistic coefficient
@@ -175,8 +180,19 @@ for i in range(1,dim_ty):
     t[i-1] = res.t #add integration time to the list
     x_true[i-1] = res.y #add the interval to the full list
     
-    #Prediction step of kalman filter
+    # Solve the open loop model prediction, based on the same info as UKF has (no measurement)
+    res_ol = scipy.integrate.solve_ivp(utils_fb.ode_model_plant, 
+                                       t_span,#(t_y[i-1],t_y[i]), 
+                                       x0_ol, 
+                                       # rtol = 1e-10,
+                                       # atol = 1e-13
+                                       args = (w_kf, par_kf)
+                                       )
+    t_ol[i-1] = res_ol.t #add integration time to the list
+    x_ol[i-1] = res_ol.y #add the interval to the full list
+    x0_ol = res_ol.y[:, -1]
     
+    #Prediction step of kalman filter
     fx_ukf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
                                                   t_span, 
                                                   x,
@@ -218,6 +234,9 @@ x_true = np.hstack(x_true) #hstack is semi-expensive, do this only once at the e
 t = np.hstack(t)
 dim_t = t.shape[0]
 
+x_ol = np.hstack(x_ol) #hstack is semi-expensive, do this only once at the end
+t_ol = np.hstack(t_ol)
+
 #%% Plot
 ylabels = ["x1 [ft]", "x2 [ft/s]", "x3 []", "y []"]#
     
@@ -226,6 +245,7 @@ for i in range(dim_x): #plot true states and ukf's estimates
     ax1[i].plot(t, x_true[i, :], label = "True")
     ax1[i].plot(t_y, x_post[i, :], label = "UKF")
     ax1[i].plot(t_y, x_post_qf[i, :], label = "UKF_qf")
+    ax1[i].plot(t_ol, x_ol[i, :], label = "OL")
     # ax1[i].plot(t_y, x_prior[i, :], label = "UKF-prior")
     ax1[i].set_ylabel(ylabels[i])
 ax1[-1].set_xlabel("Time [s]")
