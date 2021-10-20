@@ -17,9 +17,9 @@ def ode_model_plant(t, x, w, par):
     
     #Unpack states and parameters
     rho_0 = par["rho_0"]
-    M = par["M"]
+    # M = par["M"]
     g = par["g"]
-    a = par["a"]
+    # a = par["a"]
     k = par["k"]
     
 
@@ -30,8 +30,9 @@ def ode_model_plant(t, x, w, par):
     x_dot[2] = w[2] #it is equal to w[2]
     return x_dot
 
-def hx(x, v, par):
-    y = np.sqrt(np.square(par["M"]) + np.square(x[0] - par["a"])) + v
+def hx(x, par):
+    y_rep = par["y_rep"] #this is the same as the measurment noise, v
+    y = np.sqrt(np.square(par["M"]) + np.square(x[0] - par["a"])) + y_rep
     return y
 
 def fx_for_UT_gen_Q(sigmas, list_of_keys, t_span, x, par, w):
@@ -46,6 +47,17 @@ def fx_for_UT_gen_Q(sigmas, list_of_keys, t_span, x, par, w):
                     x,
                     args_ode = (w, par)
                     )
+    # print(yi)
+    return yi
+
+def hx_for_UT_gen_R(sigmas, list_of_keys, x, par):
+    
+    for i in range(len(list_of_keys)):
+        key = list_of_keys[i]
+        if not key in par:
+            raise KeyError("This key should be in par")
+        par[key] = sigmas[i]
+    yi = np.array([hx(x, par)])
     # print(yi)
     return yi
         
@@ -70,12 +82,14 @@ def get_x0_literature():
 
 def get_literature_values():
     #Nominal parameter values
-    par_mean = {"rho_0": 2., # [lb-sec^2/ft4]
+    par_mean_fx = {"rho_0": 2., # [lb-sec^2/ft4]
                 "k": 20e3, # [ft]
-                "g": 32.2, # [ft/s2]
-                "M": 100e3, # [ft]
-                "a": 100e3 # [ft]
+                "g": 32.2 # [ft/s2]
                 }
+    par_mean_hx = {
+        "M": 100e3, # [ft]
+        "a": 100e3 # [ft]
+        }
     
     #Kalman filter values in the description
     Q = np.diag([0., 0., 0.]) #as in Dan Simon's exercise text
@@ -87,14 +101,14 @@ def get_literature_values():
     #Measurement noise
     R = np.array([10e3]) #[ft^2]
     
-    return par_mean, Q, R
+    return par_mean_fx, par_mean_hx, Q, R
 
 def compute_performance_index_valappil(x_kf, x_ol, x_true):
     J = np.divide(np.linalg.norm(x_kf - x_true, axis = 1, ord = 2),
                   np.linalg.norm(x_ol - x_true, axis = 1, ord = 2))
     return J
 
-def get_param_ukf_case1(std_dev_prct = 0.05, plot_dist = True):
+def get_param_ukf_case1(par_fx = True, std_dev_prct = 0.05, plot_dist = True):
     """
     Generates gamma distributions for the parameters. Mean of gamma dist = par_mean from get_literature_values, and standard deviation of gamma dist = mean_literature*std_dev_prct
 
@@ -113,17 +127,23 @@ def get_param_ukf_case1(std_dev_prct = 0.05, plot_dist = True):
         DESCRIPTION. Key contains deterministic parameters.
 
     """
-    
-    par_mean, Q, R = get_literature_values()
     par_dist = {}
+    par_det = {}
+    
+    if par_fx: #want parameters for state equations
+        par_mean, par_hx, Q, R = get_literature_values()
+    else: #want parameters for measurement equation
+        par_func, par_mean, Q, R = get_literature_values()
+    
+    
     for (key, val) in par_mean.items():
         if key == "g":
             continue
         alpha, loc, beta = get_param_gamma_dist(val, val*std_dev_prct, num_std = 2)
         par_dist[key] = scipy.stats.gamma(alpha, loc = loc, scale = 1/beta)
         
-        
-    par_det = {"g": par_mean["g"]}
+    if "g" in par_mean.keys():   
+        par_det["g"] = par_mean["g"]
     
     if plot_dist:
         dim_dist = len(par_dist)
@@ -202,6 +222,11 @@ def get_sigmapoints_and_weights(par_dist):
                     for k, dist in par_dist.items()]) #3rd central moment
     cm4 = np.array([scipy.stats.moment(dist.rvs(size = int(1e6)), moment = 4) 
                     for k, dist in par_dist.items()]) #4th central moment
+    
+    print(f"mean: {mean}\n",
+          f"var: {var}\n",
+          f"cm3: {cm3}\n",
+          f"cm4: {cm4}")
     
     #Generate sigma points
     sigma_points = spc.GenUTSigmaPoints(n) #initialize the class
