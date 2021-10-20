@@ -49,7 +49,8 @@ for key, dist in par_dist_fx.items():
     mode = scipy.optimize.minimize(lambda theta: -dist.pdf(theta),
                                    dist.mean(), #use mean as theta0
                                    tol = 1e-10) 
-    par_true_fx[key] = mode.x #true system uses the mode values
+    # par_true_fx[key] = mode.x #true system uses the mode values
+    par_true_fx[key] = dist.mean()+dist.std() #true system uses the mean - std_dev
     par_kf_fx[key] = dist.mean() #the ukf uses mean values reported in the literaure
 
     print(f"{key}_true/{key}_KF: {par_true_fx[key]/par_kf_fx[key]}")
@@ -71,6 +72,7 @@ for key, dist in par_dist_hx.items():
                                    dist.mean(), #use mean as theta0
                                    tol = 1e-10) 
     par_true_hx[key] = mode.x #true system uses the mode values
+    # par_true_hx[key] = dist.mean() - dist.std() #true system uses the mean - std_dev
     par_kf_hx[key] = dist.mean() #the ukf uses mean values reported in the literaure
 
     print(f"{key}_true/{key}_KF: {par_true_hx[key]/par_kf_hx[key]}")
@@ -83,16 +85,29 @@ y_rep = scipy.stats.norm(loc = 0.,
 par_true_hx["y_rep"] = y_rep.rvs()
 par_kf_hx["y_rep"] = y_rep.mean()
 par_dist_hx["y_rep"] = y_rep
-
 # par_kf_hx = par_true_hx
+
+#%% Define samples for LHS
+N_lhs_dist = 10
+par_lhs_fx, samples_lhs_fx, fig_lhs, ax_lhs = utils_fb.get_lhs_points(par_dist_fx,
+                                                              N_lhs_dist = N_lhs_dist,
+                                                              plot_mc_samples=False)
+par_lhs_fx["g"] = np.ones(N_lhs_dist)*par_kf_fx["g"] #append with constant g
+par_lhs_hx, samples_lhs_hx, fig_lhs, ax_lhs = utils_fb.get_lhs_points(par_dist_hx, 
+                                                                      N_lhs_dist = N_lhs_dist, 
+                                                                      plot_mc_samples=False
+                                                                      )
+
 #%% Define dimensions and initialize arrays
 # sigmas, w = utils_fb.get_sigmapoints_and_weights(par_dist)
 
 x0 = utils_fb.get_x0_literature()
-P0 = np.diag([1e6,#[ft^2], altitute, initial covariance matrix for UKF
+P0 = np.diag([3e8,#[ft^2], altitute, initial covariance matrix for UKF
             4e6, # [ft^2], horizontal range
-            1e-8 # [?] ballistic coefficient
+            1e-6 # [?] ballistic coefficient
             ])
+# print(x0+np.sqrt(np.diag(P0)))
+
 x0_kf = copy.deepcopy(x0) + np.sqrt(np.diag(P0)) #+ the standard deviation
 dim_x = x0.shape[0]
 dt_y = .5 # [s] <=> 5 ms. Measurement frequency
@@ -111,10 +126,12 @@ y[:, 0] = y0
 x_true = np.zeros((dim_x, dim_t)) #[[] for _ in range(dim_t-1)] #make a list of list
 x_ol = np.zeros((dim_x, dim_t)) #Open loop simulation - same starting point and param as UKF
 x_post = np.zeros((dim_x, dim_t))
+x_post_lhs = np.zeros((dim_x, dim_t))
 x_post_qf = np.zeros((dim_x, dim_t))
 # x_prior = np.zeros((dim_x, dim_ty))
 
 x_true[:, 0] = x0
+x_post_lhs[:, 0] = x0_kf
 x_post[:, 0] = x0_kf
 x_post_qf[:, 0] = x0_kf
 x0_ol = copy.deepcopy(x0_kf)
@@ -124,13 +141,14 @@ t_span = (t[0],t[1])
 
 #%% Create noise
 # v = np.random.normal(loc = 0, scale = np.sqrt(R_nom), size = dim_t) #white noise
-w_plant = np.random.multivariate_normal(np.zeros((dim_x,)), 
-                                        Q_nom, 
-                                        size = dim_t)
+# w_plant = np.random.multivariate_normal(np.zeros((dim_x,)), 
+#                                         Q_nom, 
+#                                         size = dim_t)
+w_plant = np.zeros((dim_t, dim_x))
 w_noise_kf = np.zeros(dim_x)
 # v_noise_kf = np.zeros(dim_y)
 
-#%% Define UKF - it uses Julier's sigma points
+#%% Define UKF with adaptive Q, R from UT
 points = ukf_sp.JulierSigmaPoints(dim_x,
                                   kappa = 3-dim_x)
 fx_ukf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
@@ -149,15 +167,34 @@ kf = UKF.UnscentedKalmanFilter(dim_x = dim_x,
                                 fx = fx_ukf,
                                 points = points)
 kf.x = x_post[:, 0]
-kf.P = P0.copy()
-# kf.P = np.diag([1e6,#[ft^2], altitute
-#                 4e6, # [ft^2], horizontal range
-#                 1e1 # [?] ballistic coefficient
-#                 ])
-kf.Q = Q_nom
-kf.R = R_nom
+kf.P = copy.deepcopy(P0)
+kf.Q = Q_nom #to be updated in a loop
+kf.R = R_nom #to be updated in a loop
 
-#Make one filter where we have Q fixed
+#%% Define UKF with adaptive Q, R from LHS/MC
+points_lhs = ukf_sp.JulierSigmaPoints(dim_x,
+                                  kappa = 3-dim_x)
+fx_ukf_lhs = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                             t_span, 
+                                             x,
+                                             args_ode = (w_noise_kf,
+                                                         par_kf_fx))
+
+hx_ukf_lhs = lambda x_in: utils_fb.hx(x_in, par_kf_hx)#.reshape(-1,1)
+
+#kf is where Q adapts based on UT of parametric uncertainty
+kf_lhs = UKF.UnscentedKalmanFilter(dim_x = dim_x, 
+                                   dim_z = dim_y, 
+                                    dt = 100, 
+                                    hx = hx_ukf, 
+                                    fx = fx_ukf,
+                                    points = points_lhs)
+kf_lhs.x = x_post_lhs[:, 0]
+kf_lhs.P = copy.deepcopy(P0)
+kf_lhs.Q = Q_nom #to be updated in a loop
+kf_lhs.R = R_nom #to be updated in a loop
+
+#%% Define UKF with fixed Q
 points_qf = ukf_sp.JulierSigmaPoints(dim_x,
                                   kappa = 3-dim_x)
 fx_ukf_qf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
@@ -174,14 +211,7 @@ kf_qf = UKF.UnscentedKalmanFilter(dim_x = dim_x,
                                   fx = fx_ukf_qf, 
                                   points = points_qf)
 kf_qf.x = x_post[:, 0]
-kf_qf.P = np.diag([1e6,#[ft^2], altitute
-                4e6, # [ft^2], horizontal range
-                1e-8 # [?] ballistic coefficient
-                ])
-# kf.P = np.diag([1e6,#[ft^2], altitute
-#                 4e6, # [ft^2], horizontal range
-#                 1e1 # [?] ballistic coefficient
-#                 ])
+kf_qf.P = copy.deepcopy(P0)
 kf_qf.Q = Q_nom
 kf_qf.R = R_nom
 
@@ -195,21 +225,16 @@ fx_gen_Q = lambda si: utils_fb.fx_for_UT_gen_Q(si,
                                                x0, 
                                                par_kf_fx,
                                                w_noise_kf)
-mean_ut, Q_ut = ut.unscented_transformation(sigmas_fx, 
-                                            w_fx, 
-                                            fx = fx_gen_Q)
-kf.Q = Q_ut
-#%% Get parametric uncertainty of xx by GenUT
-# sigmas_hx, w_hx = utils_fb.get_sigmapoints_and_weights(par_dist_hx)
-# list_dist_hx_keys = list(par_dist_hx.keys()) # list of parameters with distribution
-# hx_gen_R = lambda si: utils_fb.hx_for_UT_gen_R(si, 
-#                                                list_dist_hx_keys, 
-#                                                x0, 
-#                                                par_kf_hx)
-# mean_ut, R_ut = ut.unscented_transformation(sigmas_hx, 
-#                                             w_hx, 
-#                                             fx = hx_gen_R)
-# kf.Q = Q_ut
+
+#%% Get parametric uncertainty of hx by GenUT
+sigmas_hx, w_hx = utils_fb.get_sigmapoints_and_weights(par_dist_hx)
+list_dist_hx_keys = list(par_dist_hx.keys()) # list of parameters with distribution
+hx_gen_R = lambda si: utils_fb.hx_for_UT_gen_R(si, 
+                                                list_dist_hx_keys, 
+                                                x0, 
+                                                par_kf_hx)
+
+
 #%% Simulate the plant and UKF
 for i in range(1,dim_t):
     t_span = (t[i-1], t[i])
@@ -221,7 +246,6 @@ for i in range(1,dim_t):
                                     # atol = 1e-13
                                     args = (w_plant_i, par_true_fx)
                                     )
-    # t[i-1] = res.t #add integration time to the list
     x_true[:, i] = res.y[:, -1] #add the interval to the full list
     
     # Solve the open loop model prediction, based on the same info as UKF has (no measurement)
@@ -234,8 +258,14 @@ for i in range(1,dim_t):
                                        )
     x_ol[:, i] = res_ol.y[:, -1] #add the interval to the full list
     
-    #Prediction step of kalman filter
+    #Prediction step of kalman filter. Make the functions for each UKF
     fx_ukf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                                  t_span, 
+                                                  x,
+                                                  args_ode = (w_noise_kf,
+                                                              par_kf_fx)
+                                                  )
+    fx_ukf_lhs = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
                                                   t_span, 
                                                   x,
                                                   args_ode = (w_noise_kf,
@@ -253,10 +283,20 @@ for i in range(1,dim_t):
                                                    x_post[:, i-1], 
                                                    par_kf_fx,
                                                    w_noise_kf)
+    #Adaptive Q by UT
     mean_ut, Q_ut = ut.unscented_transformation(sigmas_fx, w_fx, fx = fx_gen_Q)
     kf.Q = Q_ut
     
+    #Adaptive Q by LHS
+    Q_lhs = utils_fb.get_Q_from_lhs(par_lhs_fx, 
+                                    x_post_lhs[:, i-1], 
+                                    t_span, 
+                                    w_noise_kf)
+    kf_lhs.Q = Q_lhs
+    
+    #Prediction step of each UKF
     kf.predict(fx = fx_ukf)
+    kf_lhs.predict(fx = fx_ukf_lhs)
     kf_qf.predict(fx = fx_ukf_qf)
     # print(f"pred: {kf.x}")
     
@@ -264,22 +304,34 @@ for i in range(1,dim_t):
     par_true_hx["y_rep"] = y_rep.rvs() #draw a new sample from noise statistics
     y[:, i] = utils_fb.hx(x_true[:, i], par_true_hx) #add the measurement
 
+    #Adaptive R by UT
+    x_prior = copy.deepcopy(kf.x_prior)
+    hx_gen_R = lambda si: utils_fb.hx_for_UT_gen_R(si, 
+                                                   list_dist_hx_keys, 
+                                                   x_prior, 
+                                                   par_kf_hx)
+    mean_ut, R_ut = ut.unscented_transformation(sigmas_hx, 
+                                                w_hx, 
+                                                fx = hx_gen_R)
+    kf.R = R_ut
+    
+    #Adaptive R by LHS
+    x_prior_lhs = copy.deepcopy(kf_lhs.x_prior)
+    R_lhs = utils_fb.get_R_from_lhs(par_lhs_hx, x_prior_lhs, dim_y)
+    kf_lhs.R = R_lhs
+    
     #Correction step of UKF
     kf.update(y[:, i], hx = hx_ukf)
+    kf_lhs.update(y[:, i], hx = hx_ukf_lhs)
     kf_qf.update(y[:, i], hx = hx_ukf_qf)
     
     # Save the estimates
-    # x_prior[:, i] = kf.x_prior
     x_post[:, i] = kf.x
+    x_post_lhs[:, i] = kf_lhs.x
     x_post_qf[:, i] = kf_qf.x
     
-# Gather the results in a single np.array()
-# x_true = np.hstack(x_true) #hstack is semi-expensive, do this only once at the end
-# t = np.hstack(t)
-# dim_t = t.shape[0]
 
-# x_ol = np.hstack(x_ol) #hstack is semi-expensive, do this only once at the end
-# t_ol = np.hstack(t_ol)
+y[:, 0] = np.nan #the 1st measurement is not real, just for programming convenience
 
 #%% Plot
 ylabels = ["x1 [ft]", "x2 [ft/s]", "x3 []", "y []"]#
@@ -288,7 +340,8 @@ fig1, ax1 = plt.subplots(dim_x + 1, 1, sharex = True)
 for i in range(dim_x): #plot true states and ukf's estimates
     ax1[i].plot(t, x_true[i, :], label = "True")
     ax1[i].plot(t, x_post[i, :], label = "UKF")
-    # ax1[i].plot(t, x_post_qf[i, :], label = "UKF_qf")
+    ax1[i].plot(t, x_post_lhs[i, :], label = "UKF_LHS")
+    ax1[i].plot(t, x_post_qf[i, :], label = "UKF_qf")
     ax1[i].plot(t, x_ol[i, :], label = "OL")
     # ax1[i].plot(t_y, x_prior[i, :], label = "UKF-prior")
     ax1[i].set_ylabel(ylabels[i])
@@ -300,7 +353,13 @@ ax1[0].legend()
 
 #%% Compute performnance index
 j_valappil = utils_fb.compute_performance_index_valappil(x_post, x_ol, x_true)
+j_valappil_lhs = utils_fb.compute_performance_index_valappil(x_post_lhs, x_ol, x_true)
 j_valappil_qf = utils_fb.compute_performance_index_valappil(x_post_qf, x_ol, x_true)
 
+print("Number of model evaluations for computing noise statistics:\n",
+      f"Q by UT: {sigmas_fx.shape[1]}\n",
+      f"Q by LHS: {N_lhs_dist}\n",
+      f"R by UT: {sigmas_hx.shape[1]}\n",
+      f"R by LHS: {N_lhs_dist}\n")
 for i in range(dim_x):
-    print(f"{ylabels[i]}: Q-UT = {j_valappil[i]} and Q-fixed = {j_valappil_qf[i]}")
+    print(f"{ylabels[i]}: Q-UT = {j_valappil[i]: .3f}, Q-LHS = {j_valappil_lhs[i]: .3f} and Q-fixed = {j_valappil_qf[i]: .3f}")
