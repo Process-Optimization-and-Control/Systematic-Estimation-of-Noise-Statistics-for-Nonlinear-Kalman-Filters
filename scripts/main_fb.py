@@ -49,8 +49,8 @@ for key, dist in par_dist_fx.items():
     mode = scipy.optimize.minimize(lambda theta: -dist.pdf(theta),
                                    dist.mean(), #use mean as theta0
                                    tol = 1e-10) 
-    # par_true_fx[key] = mode.x #true system uses the mode values
-    par_true_fx[key] = dist.mean()+dist.std() #true system uses the mean - std_dev
+    par_true_fx[key] = mode.x #true system uses the mode values
+    # par_true_fx[key] = dist.mean()+dist.std() #true system uses the mean - std_dev
     par_kf_fx[key] = dist.mean() #the ukf uses mean values reported in the literaure
 
     print(f"{key}_true/{key}_KF: {par_true_fx[key]/par_kf_fx[key]}")
@@ -340,10 +340,9 @@ fig1, ax1 = plt.subplots(dim_x + 1, 1, sharex = True)
 for i in range(dim_x): #plot true states and ukf's estimates
     ax1[i].plot(t, x_true[i, :], label = "True")
     ax1[i].plot(t, x_post[i, :], label = "UKF")
-    ax1[i].plot(t, x_post_lhs[i, :], label = "UKF_LHS")
+    ax1[i].plot(t, x_post_lhs[i, :], label = f"UKF_LHS, N = {N_lhs_dist}")
     ax1[i].plot(t, x_post_qf[i, :], label = "UKF_qf")
     ax1[i].plot(t, x_ol[i, :], label = "OL")
-    # ax1[i].plot(t_y, x_prior[i, :], label = "UKF-prior")
     ax1[i].set_ylabel(ylabels[i])
 ax1[-1].set_xlabel("Time [s]")
 #Plot measurements

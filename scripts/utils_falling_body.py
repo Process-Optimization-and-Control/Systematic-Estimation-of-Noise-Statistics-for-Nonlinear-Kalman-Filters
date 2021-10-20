@@ -95,7 +95,7 @@ def get_literature_values():
     #Kalman filter values in the description
     Q = np.diag([0., 0., 0.]) #as in Dan Simon's exercise text
     #Can try different Q-values
-    Q = np.diag([1e4, 1e4, 1e-8]) 
+    Q = np.diag([1e1, 1e1, 1e-8]) 
     # Q = np.diag([1e-8, 1e-8, 1e-8]) 
     # Q = np.eye(4)*1e-3
     
