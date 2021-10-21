@@ -100,7 +100,6 @@ kf.P = np.diag([1e-4,#1e-4 corresponds to std of 0,01m <=> 1 cm
                 1e-3, #In radians.  1e-3 corresponds to 1,8deg in standard deviations, np.rad2deg(np.sqrt(1e-3))
                 1e-8])
 kf.Q = Q_nom
-kf.Q = Q_ut
 kf.R = R_nom
 #Generate measurement vectors
 v = np.random.normal(loc = 0, scale = np.sqrt(R_nom), size = dim_ty) #white noise
@@ -131,14 +130,14 @@ for i in range(1,dim_ty):
                                                          # lambda theta: 1. #cos_fx
                                                          )
                                              )
-    fx_gen_Q = lambda si: utils_ip.fx_for_UT_gen_Q(si, list_dist_keys, t_span, x_post[:, i-1], par_kf)
+    # fx_gen_Q = lambda si: utils_ip.fx_for_UT_gen_Q(si, list_dist_keys, t_span, x_post[:, i-1], par_kf)
     
-    if (t_y[i] >= 10) and (k < 10):
-        kf.Q = Q_nom
-        k += 1
-    else:
-        mean_ut, Q_ut = ut.unscented_transformation(sigmas, w, fx = fx_gen_Q)
-        kf.Q = Q_ut
+    # if (t_y[i] >= 10) and (k < 10):
+    #     kf.Q = Q_nom
+    #     k += 1
+    # else:
+    #     mean_ut, Q_ut = ut.unscented_transformation(sigmas, w, fx = fx_gen_Q)
+    #     kf.Q = Q_ut
     
     kf.predict(fx = fx_ukf)
     

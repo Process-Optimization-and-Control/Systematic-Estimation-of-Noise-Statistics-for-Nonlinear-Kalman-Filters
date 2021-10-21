@@ -31,7 +31,7 @@ import unscented_transformation as ut
 import utils_falling_body as utils_fb
 
 #%% For running the sim N times
-N = 20
+N = 1
 dim_x = 3
 j_valappil = np.zeros((dim_x, N))
 j_valappil_lhs = np.zeros((dim_x, N))
@@ -44,10 +44,10 @@ while Ni < N:
         
         # utils_ip.uncertainty_venturi()
         _, _, Q_nom, R_nom = utils_fb.get_literature_values()
-        par_dist_fx, par_det_fx, fig_p, ax_p = utils_fb.get_param_ukf_case1(
+        par_dist_fx, par_det_fx, fig_p_fx, ax_p_fx = utils_fb.get_param_ukf_case1(
             par_fx = True,
             std_dev_prct = 0.05, 
-            plot_dist = False)
+            plot_dist = True)
         
         mode_dist = np.zeros(len(par_dist_fx)) #for the mode of the distributions
         par_true_fx = par_det_fx.copy()
@@ -67,10 +67,10 @@ while Ni < N:
         #%% Import the distributions of the parameters for the fx equations (measurements)
         #Modes of the dists are used for the true system, and mean of the dists are the parameters for the UKF
         
-        par_dist_hx, par_det_hx, fig_p, ax_p = utils_fb.get_param_ukf_case1(
+        par_dist_hx, par_det_hx, fig_p_hx, ax_p_hx = utils_fb.get_param_ukf_case1(
             par_fx = False, #return based on par_true_hx in stead
             std_dev_prct = 0.05, 
-            plot_dist = False)
+            plot_dist = True)
         mode_dist = np.zeros(len(par_dist_hx)) #for the mode of the distributions
         par_true_hx = par_det_hx.copy()
         par_kf_hx = par_det_hx.copy()
@@ -97,13 +97,17 @@ while Ni < N:
         
         #%% Define samples for LHS
         N_lhs_dist = 10
+        labels_fx = par_true_fx.copy()
+        labels_fx.pop("g")
         par_lhs_fx, samples_lhs_fx, fig_lhs, ax_lhs = utils_fb.get_lhs_points(par_dist_fx,
                                                                       N_lhs_dist = N_lhs_dist,
-                                                                      plot_mc_samples=False)
+                                                                      plot_mc_samples=True,
+                                                                      labels = list(labels_fx.keys()))
         par_lhs_fx["g"] = np.ones(N_lhs_dist)*par_kf_fx["g"] #append with constant g
         par_lhs_hx, samples_lhs_hx, fig_lhs, ax_lhs = utils_fb.get_lhs_points(par_dist_hx, 
                                                                               N_lhs_dist = N_lhs_dist, 
-                                                                              plot_mc_samples=False
+                                                                              plot_mc_samples=True,
+                                                                              labels = list(par_true_hx.keys())
                                                                               )
         
         #%% Define dimensions and initialize arrays

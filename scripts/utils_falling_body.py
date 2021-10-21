@@ -159,7 +159,8 @@ def get_param_ukf_case1(par_fx = True, std_dev_prct = 0.05, plot_dist = True):
             print(key, mode, dist.mean())
             x = np.linspace(dist.ppf(.001), dist.ppf(.999), 100)
             ax[i].plot(x, dist.pdf(x), label = "pdf")
-            ax[i].set_ylabel(key)
+            ax[i].set_xlabel(key)
+            ax[i].set_ylabel("pdf")
             ylim = ax[i].get_ylim()
             ax[i].plot([par_mean[key], par_mean[key]], [ylim[0], ylim[1]], 
                     label = "nom")
@@ -293,7 +294,7 @@ def get_lhs_points(dist_dict, N_lhs_dist = 10, plot_mc_samples = False, labels =
                 line_lhs_grid, = ax_cdf[i].plot(grid_x, grid_y, linestyle = "dashed", color = 'r')#, label = "LHS grid")
             line_lhs_grid.set_label("LHS grid")
             ax_cdf[i].set_ylabel("CDF")
-            ax_pdf[i].set_xlabel(labels[i])
+            ax_cdf[i].set_xlabel(labels[i])
             i += 1
         
     
