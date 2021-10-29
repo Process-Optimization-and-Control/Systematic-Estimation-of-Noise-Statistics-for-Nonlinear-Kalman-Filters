@@ -27,7 +27,7 @@ import unscented_transformation as ut
 import utils_inverted_pendulum as utils_ip
 
 #%% Define dimensions and initialize arrays
-# utils_ip.uncertainty_venturi()
+utils_ip.uncertainty_venturi()
 #Get nominal parameters, initial values and assign space for variables
 par, Q_nom, R_nom = utils_ip.get_literature_values()
 

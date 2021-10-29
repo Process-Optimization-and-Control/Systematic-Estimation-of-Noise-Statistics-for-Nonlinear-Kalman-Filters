@@ -29,18 +29,16 @@ import sigma_points_classes as spc
 import unscented_transformation as ut
 import utils_falling_body as utils_fb
 
-
 #%% For running the sim N times
-N = 100
+N = 20
 dim_x = 3
 j_valappil = np.zeros((dim_x, N))
 j_valappil_lhs = np.zeros((dim_x, N))
 j_valappil_qf = np.zeros((dim_x, N))
+exceptions_occurred = []
 Ni = 0
-rand_seed = 1234
 while Ni < N:
     try:
-        np.random.seed(rand_seed) #to get reproducible results. rand_seed updated in every iteration
         #%% Import the distributions of the parameters for the fx equations (states)
         #Modes of the dists are used for the true system, and mean of the dists are the parameters for the UKF
         
@@ -62,9 +60,10 @@ while Ni < N:
                                            tol = 1e-10) 
             par_true_fx[key] = mode.x #true system uses the mode values
             # par_true_fx[key] = dist.mean()+dist.std() #true system uses the mean - std_dev
-            par_kf_fx[key] = dist.mean() #the ukf uses mean values reported in the literaure
+            par_kf_fx[key] = dist.rvs() #the ukf uses mean values reported in the literaure
         
             # print(f"{key}_true/{key}_KF: {par_true_fx[key]/par_kf_fx[key]}")
+            print(f"{key}_true: {par_true_fx[key]} and {key}_KF: {par_kf_fx[key]}")
         # par_kf_fx = par_true_fx
         #%% Import the distributions of the parameters for the hx equations (measurements)
         #Modes of the dists are used for the true system, and mean of the dists are the parameters for the UKF
@@ -84,11 +83,14 @@ while Ni < N:
                                            tol = 1e-10) 
             par_true_hx[key] = mode.x #true system uses the mode values
             # par_true_hx[key] = dist.mean() - dist.std() #true system uses the mean - std_dev
-            par_kf_hx[key] = dist.mean() #the ukf uses mean values reported in the literaure
+            par_kf_hx[key] = dist.rvs() #the ukf uses mean values reported in the literaure
         
             # print(f"{key}_true/{key}_KF: {par_true_hx[key]/par_kf_hx[key]}")
+            print(f"{key}_true: {par_true_hx[key]} and {key}_KF: {par_kf_hx[key]}")
         # par_kf_hx = par_true_hx
         #Measurement equation also need y_repeatability
+        # y_rep = scipy.stats.norm(loc = np.zeros(R_nom.shape[0]),
+        #                          scale = np.sqrt(np.diag(R_nom))) #this is just 1D, so ok
         y_rep = scipy.stats.norm(loc = 0.,
                                  scale = np.sqrt(R_nom[0])) #this is just 1D, so ok
         par_true_hx["y_rep"] = y_rep.rvs()
@@ -114,10 +116,14 @@ while Ni < N:
         # sigmas, w = utils_fb.get_sigmapoints_and_weights(par_dist)
         
         x0 = utils_fb.get_x0_literature()
-        P0 = np.diag([3e8,#[ft^2], altitute, initial covariance matrix for UKF
+        P0 = np.diag([1e6,#[ft^2], altitute, initial covariance matrix for UKF
                     4e6, # [ft^2], horizontal range
                     1e-6 # [?] ballistic coefficient
                     ])
+        # P0 = np.diag([3e8,#[ft^2], altitute, initial covariance matrix for UKF
+        #             4e6, # [ft^2], horizontal range
+        #             1e-6 # [?] ballistic coefficient
+        #             ])
         # print(x0+np.sqrt(np.diag(P0)))
         
         x0_kf = copy.deepcopy(x0) + np.sqrt(np.diag(P0)) #+ the standard deviation
@@ -152,8 +158,13 @@ while Ni < N:
         t_span = (t[0],t[1])
         
         #%% Create noise
+        # v = np.random.normal(loc = 0, scale = np.sqrt(R_nom), size = dim_t) #white noise
+        # w_plant = np.random.multivariate_normal(np.zeros((dim_x,)), 
+        #                                         Q_nom, 
+        #                                         size = dim_t)
         w_plant = np.zeros((dim_t, dim_x))
         w_noise_kf = np.zeros(dim_x)
+        # v_noise_kf = np.zeros(dim_y)
         
         #%% Define UKF with adaptive Q, R from UT
         points = ukf_sp.JulierSigmaPoints(dim_x,
@@ -213,14 +224,14 @@ while Ni < N:
         hx_ukf_qf = lambda x_in: utils_fb.hx(x_in, par_kf_hx)#.reshape(-1,1)
         kf_qf = UKF.UnscentedKalmanFilter(dim_x = dim_x, 
                                           dim_z = dim_y,
-                                          dt = None, #not used
+                                          dt = 100, 
                                           hx = hx_ukf_qf, 
                                           fx = fx_ukf_qf, 
                                           points = points_qf)
         kf_qf.x = x_post[:, 0]
         kf_qf.P = copy.deepcopy(P0)
         kf_qf.Q = Q_nom
-        kf_qf.R = R_nom*100
+        kf_qf.R = R_nom*5000
         
         
         #%% Get parametric uncertainty of fx by GenUT
@@ -356,11 +367,11 @@ while Ni < N:
          x_true)
         
         Ni += 1
-        rand_seed += 1
         if (Ni%5 == 0): #print every 5th iteration                                                               
             print(f"End of iteration {Ni}/{N}")
     except BaseException as e:
         print(e)
+        exceptions_occurred.append(e)
         raise e
         continue
 print("---par_fx after sim---\n",
@@ -369,28 +380,21 @@ print("---par_fx after sim---\n",
 #%% Plot
 plot_it = True
 if plot_it:
-    # ylabels = [r"$x_1 [ft]$", r"$x_2 [ft/s]$", r"$x_3 [ft^3$/(lb-$s^2)]$", "$y [ft]$"]#
-    ylabels = [r"$x_1$ [ft]", r"$x_2$ [ft/s]", r"$x_3$ [*]", "$y$ [ft]"]#
+    ylabels = ["x1 [ft]", "x2 [ft/s]", "x3 []", "y []"]#
         
     fig1, ax1 = plt.subplots(dim_x + 1, 1, sharex = True)
     for i in range(dim_x): #plot true states and ukf's estimates
         ax1[i].plot(t, x_true[i, :], label = "True")
-        ax1[i].plot([np.nan, np.nan], [np.nan, np.nan], color='w', alpha=0, label=' ')
-        ax1[i].plot(t, x_post[i, :], label = r"$Q_{UT}$")
-        ax1[i].plot(t, x_post_lhs[i, :], label = r"$Q_{LHS}$")
-        ax1[i].plot(t, x_post_qf[i, :], label = r"$Q_{fixed}$")
-        # ax1[i].plot(t, x_post[i, :], label = r"UKF, $Q_{UT}$")
-        # ax1[i].plot(t, x_post_lhs[i, :], label = r"UKF, $Q_{LHS}$")
-        # ax1[i].plot(t, x_post_qf[i, :], label = r"UKF, $Q_{fixed}$")
+        ax1[i].plot(t, x_post[i, :], label = "UKF_UT")
+        ax1[i].plot(t, x_post_lhs[i, :], label = f"UKF_LHS, N = {N_lhs_dist}")
+        # ax1[i].plot(t, x_post_qf[i, :], label = "UKF_qf")
         ax1[i].plot(t, x_ol[i, :], label = "OL")
         ax1[i].set_ylabel(ylabels[i])
     ax1[-1].set_xlabel("Time [s]")
     #Plot measurements
     ax1[-1].plot(t, y[0,:], marker = "x", markersize = 3, linewidth = 0, label = "y")
     ax1[-1].set_ylabel(ylabels[-1])
-    # ax1[0].legend()        
-    ax1[0].legend(ncol = 3,
-                  frameon = False)        
+    ax1[0].legend()        
 
 print(f"Repeated {N} time(s). In every iteration, the number of model evaluations for computing noise statistics:\n",
       f"Q by UT: {sigmas_fx.shape[1]}\n",
@@ -405,22 +409,22 @@ for i in range(dim_x):
 if N > 5: #only plot this if we have done some iterations
     fig_v, ax_v = plt.subplots(dim_x,1)
     # labels_violin = ["UT", "LHS"]
-    labels_violin = ["GenUT", "LHS", "Fixed"]
+    labels_violin = ["UT", "LHS", "Fixed"]
     def set_axis_style(ax, labels):
         ax.xaxis.set_tick_params(direction='out')
         ax.xaxis.set_ticks_position('bottom')
         ax.set_xticks(np.arange(1, len(labels) + 1))
         ax.set_xticklabels(labels)
         ax.set_xlim(0.25, len(labels) + 0.75)
-        # ax.set_xlabel(r'Method for tuning $Q_k, R_k$')
+        ax.set_xlabel('Sample name')
     for i in range(dim_x):
+        prct_best_runs_to_plot = .95
+        N_plt = int(prct_best_runs_to_plot*N)
         # data = np.vstack([j_valappil[i], j_valappil_lhs[i]]).T
         data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_qf[i]]).T
-        print("---cost of x_{i}---\n",
-              f"mean = {data.mean(axis = 0)}\n",
-              f"std = {data.std(axis = 0)}")
+        data = np.sort(data, axis = 0)
+        data = data[:N_plt, :]
         ax_v[i].violinplot(data)#, j_valappil_qf])
         set_axis_style(ax_v[i], labels_violin)
         ax_v[i].set_ylabel(fr"Cost $x_{i+1}$")
-    ax_v[-1].set_xlabel(r'Method for tuning $Q_k, R_k$')
-        # fig_v.suptitle(f"Cost function distribution for N = {N} iterations")
+        fig_v.suptitle(f"Cost function distribution for N = {N} iterations")
