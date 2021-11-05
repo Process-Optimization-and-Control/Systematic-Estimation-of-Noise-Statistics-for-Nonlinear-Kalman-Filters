@@ -31,10 +31,12 @@ import utils_falling_body as utils_fb
 
 
 #%% For running the sim N times
-N = 100
+N = 6
 dim_x = 3
 j_valappil = np.zeros((dim_x, N))
 j_valappil_lhs = np.zeros((dim_x, N))
+j_valappil_mc = np.zeros((dim_x, N))
+j_valappil_mcm = np.zeros((dim_x, N))
 j_valappil_qf = np.zeros((dim_x, N))
 Ni = 0
 rand_seed = 1234
@@ -109,6 +111,34 @@ while Ni < N:
                                                                               plot_mc_samples=False,
                                                                               labels = list(par_true_hx.keys())
                                                                               )
+        #%% Define samples for MC, random sampling
+        N_mc_dist = int(1e2)
+        
+        par_mc_fx, fig_mc, ax_mc = utils_fb.get_mc_points(par_dist_fx, 
+                                                            N_mc_dist = N_mc_dist, 
+                                                            plot_mc_samples=False,
+                                                            labels = labels_fx
+                                                             )
+        par_mc_fx["g"] = np.ones(N_mc_dist)*par_kf_fx["g"] #append with constant g
+        par_mc_hx, fig_mc, ax_mc = utils_fb.get_mc_points(par_dist_hx, 
+                                                            N_mc_dist = N_mc_dist, 
+                                                            plot_mc_samples=False,
+                                                            labels = list(par_true_hx.keys())
+                                                             )
+        #%% Define samples for MCm, random sampling
+        N_mcm_dist = int(1e2)
+        
+        par_mcm_fx, fig_mcm, ax_mcm = utils_fb.get_mc_points(par_dist_fx, 
+                                                            N_mc_dist = N_mcm_dist, 
+                                                            plot_mc_samples=False,
+                                                            labels = labels_fx
+                                                             )
+        par_mcm_fx["g"] = np.ones(N_mcm_dist)*par_kf_fx["g"] #append with constant g
+        par_mcm_hx, fig_mcm, ax_mcm = utils_fb.get_mc_points(par_dist_hx, 
+                                                            N_mc_dist = N_mcm_dist, 
+                                                            plot_mc_samples=False,
+                                                            labels = list(par_true_hx.keys())
+                                                             )
         
         #%% Define dimensions and initialize arrays
         # sigmas, w = utils_fb.get_sigmapoints_and_weights(par_dist)
@@ -139,11 +169,15 @@ while Ni < N:
         x_ol = np.zeros((dim_x, dim_t)) #Open loop simulation - same starting point and param as UKF
         x_post = np.zeros((dim_x, dim_t))
         x_post_lhs = np.zeros((dim_x, dim_t))
+        x_post_mc = np.zeros((dim_x, dim_t))
+        x_post_mcm = np.zeros((dim_x, dim_t))
         x_post_qf = np.zeros((dim_x, dim_t))
         # x_prior = np.zeros((dim_x, dim_ty))
         
         x_true[:, 0] = x0
         x_post_lhs[:, 0] = x0_kf
+        x_post_mc[:, 0] = x0_kf
+        x_post_mcm[:, 0] = x0_kf
         x_post[:, 0] = x0_kf
         x_post_qf[:, 0] = x0_kf
         x0_ol = copy.deepcopy(x0_kf)
@@ -193,13 +227,59 @@ while Ni < N:
         kf_lhs = UKF.UnscentedKalmanFilter(dim_x = dim_x, 
                                            dim_z = dim_y, 
                                             dt = 100, 
-                                            hx = hx_ukf, 
-                                            fx = fx_ukf,
+                                            hx = hx_ukf_lhs, 
+                                            fx = fx_ukf_lhs,
                                             points = points_lhs)
         kf_lhs.x = x_post_lhs[:, 0]
         kf_lhs.P = copy.deepcopy(P0)
         kf_lhs.Q = Q_nom #to be updated in a loop
         kf_lhs.R = R_nom #to be updated in a loop
+        
+        #%% Define UKF with adaptive Q, R from MC with random sampling
+        points_mc = ukf_sp.JulierSigmaPoints(dim_x,
+                                          kappa = 3-dim_x)
+        fx_ukf_mc = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                                     t_span, 
+                                                     x,
+                                                     args_ode = (w_noise_kf,
+                                                                 par_kf_fx.copy()))
+        
+        hx_ukf_mc = lambda x_in: utils_fb.hx(x_in, par_kf_hx.copy())#.reshape(-1,1)
+        
+        #kf is where Q adapts based on UT of parametric uncertainty
+        kf_mc = UKF.UnscentedKalmanFilter(dim_x = dim_x, 
+                                          dim_z = dim_y, 
+                                          dt = 100, 
+                                          hx = hx_ukf_mc, 
+                                          fx = fx_ukf_mc,
+                                            points = points_mc)
+        kf_mc.x = x_post_mc[:, 0]
+        kf_mc.P = copy.deepcopy(P0)
+        kf_mc.Q = Q_nom #to be updated in a loop
+        kf_mc.R = R_nom #to be updated in a loop
+        
+        #%% Define UKF with adaptive Q, R from MCm with random sampling and mode adjustment
+        points_mcm = ukf_sp.JulierSigmaPoints(dim_x,
+                                          kappa = 3-dim_x)
+        fx_ukf_mcm = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                                     t_span, 
+                                                     x,
+                                                     args_ode = (w_noise_kf,
+                                                                 par_kf_fx.copy()))
+        
+        hx_ukf_mcm = lambda x_in: utils_fb.hx(x_in, par_kf_hx.copy())#.reshape(-1,1)
+        
+        #kf is where Q adapts based on UT of parametric uncertainty
+        kf_mcm = UKF.UnscentedKalmanFilter(dim_x = dim_x, 
+                                          dim_z = dim_y, 
+                                          dt = 100, 
+                                          hx = hx_ukf_mcm, 
+                                          fx = fx_ukf_mcm,
+                                            points = points_mcm)
+        kf_mcm.x = x_post_mcm[:, 0]
+        kf_mcm.P = copy.deepcopy(P0)
+        kf_mcm.Q = Q_nom #to be updated in a loop
+        kf_mcm.R = R_nom #to be updated in a loop
         
         #%% Define UKF with fixed Q
         points_qf = ukf_sp.JulierSigmaPoints(dim_x,
@@ -267,76 +347,174 @@ while Ni < N:
                                                )
             x_ol[:, i] = res_ol.y[:, -1] #add the interval to the full list
             
+            
+            
+            x_nom_ut = utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                           t_span, 
+                                           x_post[:, i-1], 
+                                           args_ode = (w_noise_kf, par_kf_fx))
+            fx_gen_Q = lambda si: (utils_fb.fx_for_UT_gen_Q(si, 
+                                                           list_dist_fx_keys, 
+                                                           t_span, 
+                                                           x_post[:, i-1], 
+                                                           par_kf_fx.copy(),
+                                                           w_noise_kf)
+                                   - x_nom_ut
+                                   )
+            #Adaptive Q by UT
+            w_mean_ut, Q_ut = ut.unscented_transformation(sigmas_fx, w_fx, fx = fx_gen_Q)
+            
+            #Adaptive Q by LHS
+            w_mean_lhs, Q_lhs = utils_fb.get_wmean_Q_from_mc(par_lhs_fx.copy(), #same function as mc
+                                            x_post_lhs[:, i-1], 
+                                            t_span, 
+                                            w_noise_kf,
+                                            par_kf_fx)
+            
+            #Adaptive Q by MC random
+            w_mean_mc, Q_mc = utils_fb.get_wmean_Q_from_mc(par_mc_fx.copy(), #get_wmeanXXX or get_wmodeXXX
+                                            x_post_mc[:, i-1], 
+                                            t_span, 
+                                            w_noise_kf,
+                                            par_kf_fx)
+            
+            #Adaptive Q by MC random with mode adjustment
+            w_mode_mcm, Q_mcm = utils_fb.get_wmode_Q_from_mc(par_mcm_fx.copy(), #get_wmeanXXX or get_wmodeXXX
+                                            x_post_mcm[:, i-1], 
+                                            t_span, 
+                                            w_noise_kf,
+                                            par_kf_fx)
+            
+            w_mode_mcm[-1] = w_mean_ut[-1] #important to do this for the mode adjustemnt! This is since the mode is found "graphically" by a histogram. The last state is constant ==> it is just one bin.  The middle point of that bin is a very bad value for w_mode_mcm and it makes the filter to diverge. Check the code block "#%% Check if wk is normally distributed" for a visualization of this. If this is not done, the MC filter will diverge.
+            
+            #Check that we don't have zeros on the diagonals
+            for di in range(dim_x):
+                if (Q_ut[di,di] == 0):
+                    Q_ut[di,di] = 1e-8 
+                if (Q_lhs[di,di] == 0):
+                    Q_lhs[di,di] = 1e-8 
+                if (Q_mc[di,di] == 0):
+                    Q_mc[di,di] = 1e-8
+                if (Q_mcm[di,di] == 0):
+                    Q_mcm[di,di] = 1e-8
+            kf.Q = Q_ut
+            kf_lhs.Q = Q_lhs
+            kf_mc.Q = Q_mc
+            kf_mcm.Q = Q_mcm
+            
             #Prediction step of kalman filter. Make the functions for each UKF
-            fx_ukf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+            fx_ukf = lambda x, dt_kf: (utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
                                                           t_span, 
                                                           x,
                                                           args_ode = (w_noise_kf,
                                                                       par_kf_fx)
                                                           )
-            fx_ukf_lhs = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                       # + w_mean_ut #this line can be commented out
+                                       )
+            fx_ukf_lhs = lambda x, dt_kf: (utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
                                                           t_span, 
                                                           x,
                                                           args_ode = (w_noise_kf,
                                                                       par_kf_fx)
                                                           )
+                                            # + w_mean_lhs
+                                           )
+            fx_ukf_mc = lambda x, dt_kf: (utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                                          t_span, 
+                                                          x,
+                                                          args_ode = (w_noise_kf,
+                                                                      par_kf_fx)
+                                                          )
+                                           # + w_mean_mc # This line can be commented out
+                                          )
+            fx_ukf_mcm = lambda x, dt_kf: (utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                                          t_span, 
+                                                          x,
+                                                          args_ode = (w_noise_kf,
+                                                                      par_kf_fx)
+                                                          )
+                                            + w_mode_mcm # This line can be commented out
+                                          )
             fx_ukf_qf = lambda x, dt_kf: utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
                                                           t_span, 
                                                           x,
                                                           args_ode = (w_noise_kf,
                                                                       par_kf_fx)
                                                           )
-            fx_gen_Q = lambda si: utils_fb.fx_for_UT_gen_Q(si, 
-                                                           list_dist_fx_keys, 
-                                                           t_span, 
-                                                           x_post[:, i-1], 
-                                                           par_kf_fx.copy(),
-                                                           w_noise_kf)
-            #Adaptive Q by UT
-            mean_ut, Q_ut = ut.unscented_transformation(sigmas_fx, w_fx, fx = fx_gen_Q)
-            kf.Q = Q_ut
-            
-            #Adaptive Q by LHS
-            Q_lhs = utils_fb.get_Q_from_lhs(par_lhs_fx.copy(), 
-                                            x_post_lhs[:, i-1], 
-                                            t_span, 
-                                            w_noise_kf)
-            kf_lhs.Q = Q_lhs
             
             #Prediction step of each UKF
             kf.predict(fx = fx_ukf)
             kf_lhs.predict(fx = fx_ukf_lhs)
+            kf_mc.predict(fx = fx_ukf_mc)
+            kf_mcm.predict(fx = fx_ukf_mcm)
             kf_qf.predict(fx = fx_ukf_qf)
             # print(f"pred: {kf.x}")
             
             #Make a new measurement
             par_true_hx["y_rep"] = y_rep.rvs() #draw a new sample from noise statistics
             y[:, i] = utils_fb.hx(x_true[:, i], par_true_hx) #add the measurement
-            #%%
+            #%% Adaptive R
             #Adaptive R by UT
             x_prior = copy.deepcopy(kf.x_prior)
-            hx_gen_R = lambda si: utils_fb.hx_for_UT_gen_R(si, 
-                                                           list_dist_hx_keys, 
-                                                           x_prior, 
-                                                           par_kf_hx.copy())
-            mean_ut, R_ut = ut.unscented_transformation(sigmas_hx, 
+            y_nom = utils_fb.hx(x_prior, par_kf_hx)
+            hx_gen_R = lambda si: (utils_fb.hx_for_UT_gen_R(si, 
+                                                                   list_dist_hx_keys, 
+                                                                   x_prior, 
+                                                                   par_kf_hx.copy())
+                                   - y_nom
+                                   )
+            v_mean_ut, R_ut = ut.unscented_transformation(sigmas_hx, 
                                                         w_hx, 
                                                         fx = hx_gen_R)
             kf.R = R_ut
             
             #Adaptive R by LHS
             x_prior_lhs = copy.deepcopy(kf_lhs.x_prior)
-            R_lhs = utils_fb.get_R_from_lhs(par_lhs_hx.copy(), x_prior_lhs, dim_y)
+            v_mean_lhs, R_lhs = utils_fb.get_vmean_R_from_mc(par_lhs_hx.copy(), 
+                                                            x_prior_lhs, 
+                                                            dim_y,
+                                                            par_kf_hx)
             kf_lhs.R = R_lhs
             
-            #Correction step of UKF
+            #Adaptive R by MC
+            x_prior_mc = copy.deepcopy(kf_mc.x_prior)
+            v_mean_mc, R_mc = utils_fb.get_vmean_R_from_mc(par_mc_hx.copy(), 
+                                                      x_prior_mc, 
+                                                      dim_y,
+                                                      par_kf_hx)
+            kf_mc.R = np.array([[R_mc]]) #it is 1D array
+            
+            #Adaptive R by MCm (mode adjusted)
+            x_prior_mcm = copy.deepcopy(kf_mc.x_prior)
+            v_mode_mcm, R_mcm = utils_fb.get_vmode_R_from_mc(par_mc_hx.copy(), 
+                                                      x_prior_mcm, 
+                                                      dim_y,
+                                                      par_kf_hx)
+            kf_mcm.R = np.array([[R_mcm]]) #it is 1D array
+            
+            # hx_ukf2 = lambda x_in: hx_ukf(x_in) + v_mean_ut
+            # hx_ukf_lhs2 = lambda x_in: hx_ukf_lhs(x_in) + v_mean_lhs
+            # hx_ukf_mc2 = lambda x_in: hx_ukf_mc(x_in) + v_mean_mc
+            hx_ukf_mcm2 = lambda x_in: hx_ukf_mcm(x_in) + v_mode_mcm
+            
+            #Correction step of UKF with v_mean
+            # kf.update(y[:, i], hx = hx_ukf2)
+            # kf_lhs.update(y[:, i], hx = hx_ukf_lhs2)
+            # kf_mc.update(y[:, i], hx = hx_ukf_mc2)
+            kf_mcm.update(y[:, i], hx = hx_ukf_mcm2)
+            # kf_qf.update(y[:, i], hx = hx_ukf_qf)
+            
+            #Correction step of UKF wihout v_mean
             kf.update(y[:, i], hx = hx_ukf)
             kf_lhs.update(y[:, i], hx = hx_ukf_lhs)
+            kf_mc.update(y[:, i], hx = hx_ukf_mc)
             kf_qf.update(y[:, i], hx = hx_ukf_qf)
             
             # Save the estimates
             x_post[:, i] = kf.x
             x_post_lhs[:, i] = kf_lhs.x
+            x_post_mc[:, i] = kf_mc.x
+            x_post_mcm[:, i] = kf_mcm.x
             x_post_qf[:, i] = kf_qf.x
             
         
@@ -351,6 +529,12 @@ while Ni < N:
         j_valappil_lhs[:, Ni] = utils_fb.compute_performance_index_valappil(x_post_lhs, 
                                                                          x_ol, 
                                                                          x_true)
+        j_valappil_mc[:, Ni] = utils_fb.compute_performance_index_valappil(x_post_mc, 
+                                                                         x_ol, 
+                                                                         x_true)
+        j_valappil_mcm[:, Ni] = utils_fb.compute_performance_index_valappil(x_post_mcm, 
+                                                                         x_ol, 
+                                                                         x_true)
         j_valappil_qf[:, Ni] = utils_fb.compute_performance_index_valappil(x_post_qf, 
                                                                         x_ol, 
          x_true)
@@ -363,9 +547,9 @@ while Ni < N:
         print(e)
         raise e
         continue
-print("---par_fx after sim---\n",
-              f"true: {par_true_fx}\n",
-              f"kf: {par_kf_fx}\n")
+# print("---par_fx after sim---\n",
+#               f"true: {par_true_fx}\n",
+#               f"kf: {par_kf_fx}\n")
 #%% Plot
 plot_it = True
 if plot_it:
@@ -375,9 +559,11 @@ if plot_it:
     fig1, ax1 = plt.subplots(dim_x + 1, 1, sharex = True)
     for i in range(dim_x): #plot true states and ukf's estimates
         ax1[i].plot(t, x_true[i, :], label = "True")
-        ax1[i].plot([np.nan, np.nan], [np.nan, np.nan], color='w', alpha=0, label=' ')
+        # ax1[i].plot([np.nan, np.nan], [np.nan, np.nan], color='w', alpha=0, label=' ')
         ax1[i].plot(t, x_post[i, :], label = r"$Q_{UT}$")
         ax1[i].plot(t, x_post_lhs[i, :], label = r"$Q_{LHS}$")
+        ax1[i].plot(t, x_post_mc[i, :], label = r"$Q_{MC}$")
+        ax1[i].plot(t, x_post_mcm[i, :], label = r"$Q_{MCm}$")
         ax1[i].plot(t, x_post_qf[i, :], label = r"$Q_{fixed}$")
         # ax1[i].plot(t, x_post[i, :], label = r"UKF, $Q_{UT}$")
         # ax1[i].plot(t, x_post_lhs[i, :], label = r"UKF, $Q_{LHS}$")
@@ -395,17 +581,21 @@ if plot_it:
 print(f"Repeated {N} time(s). In every iteration, the number of model evaluations for computing noise statistics:\n",
       f"Q by UT: {sigmas_fx.shape[1]}\n",
       f"Q by LHS: {N_lhs_dist}\n",
+      f"Q by MC: {N_mc_dist}\n",
+      f"Q by MCm: {N_mcm_dist}\n",
       f"R by UT: {sigmas_hx.shape[1]}\n",
-      f"R by LHS: {N_lhs_dist}\n")
+      f"R by LHS: {N_lhs_dist}\n",
+      f"R by MC: {N_mc_dist}\n",
+      f"R by MCm: {N_mcm_dist}\n")
 print("Median value of cost function is\n")
 for i in range(dim_x):
-    print(f"{ylabels[i]}: Q-UT = {np.median(j_valappil[i]): .3f}, Q-LHS-{N_lhs_dist} = {np.median(j_valappil_lhs[i]): .3f} and Q-fixed = {np.median(j_valappil_qf[i]): .3f}")
+    print(f"{ylabels[i]}: Q-UT = {np.median(j_valappil[i]): .3f}, Q-LHS-{N_lhs_dist} = {np.median(j_valappil_lhs[i]): .3f}, Q-MC-{N_mc_dist} = {np.median(j_valappil_mc[i]): .3f}, Q-MCm-{N_mcm_dist} = {np.median(j_valappil_mcm[i]): .3f} and Q-fixed = {np.median(j_valappil_qf[i]): .3f}")
 
 #%% Violin plot of cost function
-if N > 5: #only plot this if we have done some iterations
+if N >= 5: #only plot this if we have done some iterations
     fig_v, ax_v = plt.subplots(dim_x,1)
     # labels_violin = ["UT", "LHS"]
-    labels_violin = ["GenUT", "LHS", "Fixed"]
+    labels_violin = ["GenUT", "LHS", "MC", "MCm", "Fixed"]
     def set_axis_style(ax, labels):
         ax.xaxis.set_tick_params(direction='out')
         ax.xaxis.set_ticks_position('bottom')
@@ -415,7 +605,7 @@ if N > 5: #only plot this if we have done some iterations
         # ax.set_xlabel(r'Method for tuning $Q_k, R_k$')
     for i in range(dim_x):
         # data = np.vstack([j_valappil[i], j_valappil_lhs[i]]).T
-        data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_qf[i]]).T
+        data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_mc[i], j_valappil_mcm[i], j_valappil_qf[i]]).T
         print("---cost of x_{i}---\n",
               f"mean = {data.mean(axis = 0)}\n",
               f"std = {data.std(axis = 0)}")
@@ -424,3 +614,238 @@ if N > 5: #only plot this if we have done some iterations
         ax_v[i].set_ylabel(fr"Cost $x_{i+1}$")
     ax_v[-1].set_xlabel(r'Method for tuning $Q_k, R_k$')
         # fig_v.suptitle(f"Cost function distribution for N = {N} iterations")
+
+
+#%% Check if wk is normally distributed
+if False:
+    N_mc = int(1e5)
+    nbins = 50
+    x_prior = x_post[:, 0]
+    t_span = (t[0], t[1])
+    
+    par_mc_fx, fig_mc, ax_mc = utils_fb.get_mc_points(par_dist_fx, 
+                                                            N_mc_dist = N_mc, 
+                                                            plot_mc_samples=False,
+                                                            labels = labels_fx
+                                                             )
+    par_mc_fx["g"] = np.ones(N_mc)*par_kf_fx["g"] #append with constant g
+    
+    x_nom = utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                           t_span, 
+                                           x_prior, 
+                                           args_ode = (w_noise_kf, par_kf_fx))
+    fx_gen_Q = lambda si: (utils_fb.fx_for_UT_gen_Q(si, 
+                                                   list_dist_fx_keys, 
+                                                   t_span, 
+                                                   x_prior, 
+                                                   par_kf_fx.copy(),
+                                                   w_noise_kf)
+                           - x_nom
+                           )
+    #Adaptive Q by UT
+    w_mean_ut, Q_ut = ut.unscented_transformation(sigmas_fx, w_fx, fx = fx_gen_Q)
+    
+    #Adaptive Q by LHS
+    w_mean_lhs, Q_lhs = utils_fb.get_wmean_Q_from_mc(par_lhs_fx.copy(), #same function as mc
+                                    x_prior, 
+                                    t_span, 
+                                    w_noise_kf,
+                                    par_kf_fx)
+    
+    #Adaptive Q by MC random
+    w_mean_mc, Q_mc = utils_fb.get_wmean_Q_from_mc(par_mc_fx.copy(), 
+                                    x_prior, 
+                                    t_span, 
+                                    w_noise_kf,
+                                    par_kf_fx)
+    w_mode_mc, Q_mc = utils_fb.get_wmode_Q_from_mc(par_mc_fx.copy(), 
+                                    x_prior, 
+                                    t_span, 
+                                    w_noise_kf,
+                                    par_kf_fx,
+                                    nbins = nbins)
+    
+    w_ukf = utils_fb.get_w_realizations_from_mc(par_mc_fx.copy(), 
+                                                x_prior, 
+                                                t_span, 
+                                                w_noise_kf, 
+                                                par_kf_fx)
+    Q_ut = np.diag(Q_ut)
+    Q_lhs = np.diag(Q_lhs)
+    Q_mc = np.diag(Q_mc)
+
+    
+    x_plant_para = utils_fb.fx_ukf_ode(utils_fb.ode_model_plant, 
+                                        t_span, 
+                                        x_prior, 
+                                        args_ode = (w_noise_kf, par_true_fx))
+    w_plant_para = x_plant_para - x_nom
+    
+    fig_w, ax_w = plt.subplots(dim_x,1)
+    for i in range(dim_x):
+        axi = ax_w[i]
+        
+        
+        (n, bins, patches) = axi.hist(w_ukf[i, :].T, bins = nbins, alpha =.2, density = False, label = r"$w_{UKF}$")
+        l_ut = axi.scatter(w_mean_ut[i], [0],label = r"$w_{mean}^{UT} \pm \sqrt{Q^{UT}}$")
+        l_lhs = axi.scatter(w_mean_lhs[i], [0], label = "$w_{mean}^{LHS} \pm \sqrt{Q^{LHS}}$")
+        l_mc = axi.scatter(w_mean_mc[i], [0], label = "$w_{mean}^{MC} \pm \sqrt{Q^{MC}}$")
+        axi.scatter(w_plant_para[i], [0], label = "$w_{plant}$")
+        axi.scatter(w_mode_mc[i], [0], label = "$w_{mode}$")
+        
+        ylim = axi.get_ylim()
+        #plot limits mean +/- std dev for UT,
+        kwargs_ut = {"color": l_ut.get_facecolor(),
+                     "linestyle": "solid"}
+        axi.plot(np.array([w_mean_ut[i] - np.sqrt(Q_ut[i]), w_mean_ut[i] - np.sqrt(Q_ut[i])]).flatten(),
+                  list(ylim),
+                  **kwargs_ut)
+        axi.plot(np.array([w_mean_ut[i] + np.sqrt(Q_ut[i]), w_mean_ut[i] + np.sqrt(Q_ut[i])]).flatten(),
+                  list(ylim),
+                  **kwargs_ut)
+        #plot limits mean +/- std dev for LHS,
+        kwargs_lhs = {"color": l_lhs.get_facecolor(),
+                     "linestyle": "dashed"}
+        axi.plot(np.array([w_mean_lhs[i] - np.sqrt(Q_lhs[i]), w_mean_lhs[i] - np.sqrt(Q_lhs[i])]).flatten(),
+                  list(ylim),
+                  **kwargs_lhs)
+        axi.plot(np.array([w_mean_lhs[i] + np.sqrt(Q_lhs[i]), w_mean_lhs[i] + np.sqrt(Q_lhs[i])]).flatten(),
+                  list(ylim),
+                  **kwargs_lhs)
+        #plot limits mean +/- std dev for MC,
+        kwargs_mc = {"color": l_mc.get_facecolor(),
+                     "linestyle": "dashed"}
+        axi.plot(np.array([w_mean_mc[i] - np.sqrt(Q_mc[i]), w_mean_mc[i] - np.sqrt(Q_mc[i])]).flatten(),
+                  list(ylim),
+                  **kwargs_mc)
+        axi.plot(np.array([w_mean_mc[i] + np.sqrt(Q_mc[i]), w_mean_mc[i] + np.sqrt(Q_mc[i])]).flatten(),
+                  list(ylim),
+                  **kwargs_mc)
+        # axi.scatter(y_plant_para, [10], label = "Plant parameter")
+        
+        #find the mode by maximizing the histogram values
+        hist, bin_edges = np.histogram(w_ukf, bins = nbins)
+        idx = np.argmax(hist) #returns the index where there are most samples in the bin
+        [low_lim, h_lim] = [bin_edges[idx], bin_edges[idx+1]]
+        axi.scatter([low_lim, h_lim], [hist[idx], hist[idx]], label = "Mode range")
+        
+        axi.set_ylim(ylim)
+        axi.set_ylabel(f"hist values for w_{i}")
+    ax_w[0].legend(ncol = 7,
+                   frameon = False)
+    axi.set_xlabel(r"$w^{UKF}$ realizations")
+#%% Check if vk is normally distributed by code2
+if False:
+    N_mc = int(1e5)
+    nbins = 30
+    x_prior = x_post[:, 0]
+    
+    par_mc_hx, fig_mc, ax_mc = utils_fb.get_mc_points(par_dist_hx, 
+                                                    N_mc_dist = N_mc, 
+                                                    plot_mc_samples=False,
+                                                    labels = list(par_true_hx.keys())
+                                                                 )
+    # y_rep = scipy.stats.norm(loc = 0.,
+    #                              scale = np.sqrt(R_nom[0])) #this is just 1D, so ok
+    # par_true_hx["y_rep"] = y_rep.rvs()
+    # par_kf_hx["y_rep"] = y_rep.mean()
+    # par_dist_hx["y_rep"] = y_rep
+    
+    # par_mc_hx, fig_mc, ax_mc = utils_fb.get_mc_points(par_dist_hx, 
+    #                                                         N_mc_dist = N_mc, 
+    #                                                         plot_mc_samples=False,
+    #                                                         labels = labels_hx
+    #                                                          )
+    
+    y_nom = utils_fb.hx(x_prior, par_kf_hx)
+    hx_gen_R = lambda si: (utils_fb.hx_for_UT_gen_R(si, 
+                                                           list_dist_hx_keys, 
+                                                           x_prior, 
+                                                           par_kf_hx.copy())
+                           - y_nom
+                           )
+    v_mean_ut, R_ut = ut.unscented_transformation(sigmas_hx, 
+                                                w_hx, 
+                                                fx = hx_gen_R)
+    
+    #Adaptive Q by LHS
+    v_mean_lhs, R_lhs = utils_fb.get_vmean_R_from_mc(par_lhs_hx.copy(), #same function as mc
+                                    x_prior, 
+                                    dim_y,
+                                    par_kf_hx)
+    
+    #Adaptive Q by MC random
+    v_mean_mc, R_mc = utils_fb.get_vmean_R_from_mc(par_mc_hx.copy(), 
+                                    x_prior,
+                                    dim_y,
+                                    par_kf_hx)
+    v_mode_mc, R_mc = utils_fb.get_vmode_R_from_mc(par_mc_hx.copy(), 
+                                    x_prior,
+                                    dim_y,
+                                    par_kf_hx,
+                                    nbins = nbins)
+    
+    v_ukf = utils_fb.get_v_realizations_from_mc(par_mc_hx.copy(), 
+                                                x_prior, 
+                                                dim_y,
+                                                par_kf_hx)
+    # R_ut = np.diag(R_ut)
+    # R_lhs = np.diag(R_lhs)
+    # R_mc = np.diag(R_mc)
+
+    
+    y_plant_para = utils_fb.hx(x_prior, par_true_hx)
+    v_plant_para = y_plant_para - y_nom
+    
+    fig_v, ax_v = plt.subplots(dim_y,1)
+    
+    
+    
+    (n, bins, patches) = ax_v.hist(v_ukf.T, bins = nbins, alpha =.2, density = False, label = r"$v_{UKF}$")
+    l_ut = ax_v.scatter(v_mean_ut, [0],label = r"$v_{mean}^{UT} \pm \sqrt{Q^{UT}}$")
+    l_lhs = ax_v.scatter(v_mean_lhs, [0], label = "$v_{mean}^{LHS} \pm \sqrt{Q^{LHS}}$")
+    l_mc = ax_v.scatter(v_mean_mc, [0], label = "$v_{mean}^{MC} \pm \sqrt{Q^{MC}}$")
+    ax_v.scatter(v_plant_para, [0], label = "$v_{plant}$")
+    ax_v.scatter(v_mode_mc, [0], label = "$v_{mode}$")
+    
+    ylim = ax_v.get_ylim()
+    #plot limits mean +/- std dev for UT,
+    kwargs_ut = {"color": l_ut.get_facecolor(),
+                 "linestyle": "solid"}
+    ax_v.plot(np.array([v_mean_ut - np.sqrt(R_ut), v_mean_ut - np.sqrt(R_ut)]).flatten(),
+              list(ylim),
+              **kwargs_ut)
+    ax_v.plot(np.array([v_mean_ut + np.sqrt(R_ut), v_mean_ut + np.sqrt(R_ut)]).flatten(),
+              list(ylim),
+              **kwargs_ut)
+    #plot limits mean +/- std dev for LHS,
+    kwargs_lhs = {"color": l_lhs.get_facecolor(),
+                 "linestyle": "dashed"}
+    ax_v.plot(np.array([v_mean_lhs - np.sqrt(R_lhs), v_mean_lhs - np.sqrt(R_lhs)]).flatten(),
+              list(ylim),
+              **kwargs_lhs)
+    ax_v.plot(np.array([v_mean_lhs + np.sqrt(R_lhs), v_mean_lhs + np.sqrt(R_lhs)]).flatten(),
+              list(ylim),
+              **kwargs_lhs)
+    #plot limits mean +/- std dev for MC,
+    kwargs_mc = {"color": l_mc.get_facecolor(),
+                 "linestyle": "dashed"}
+    ax_v.plot(np.array([v_mean_mc - np.sqrt(R_mc), v_mean_mc - np.sqrt(R_mc)]).flatten(),
+              list(ylim),
+              **kwargs_mc)
+    ax_v.plot(np.array([v_mean_mc + np.sqrt(R_mc), v_mean_mc + np.sqrt(R_mc)]).flatten(),
+              list(ylim),
+              **kwargs_mc)
+    # ax_v.scatter(y_plant_para, [10], label = "Plant parameter")
+    
+    #find the mode by maximizing the histogram values
+    hist, bin_edges = np.histogram(v_ukf, bins = nbins)
+    idx = np.argmax(hist) #returns the index where there are most samples in the bin
+    [low_lim, h_lim] = [bin_edges[idx], bin_edges[idx+1]]
+    ax_v.scatter([low_lim, h_lim], [hist[idx], hist[idx]], label = "Mode range")
+    
+    ax_v.set_ylim(ylim)
+    ax_v.set_ylabel(f"hist values for v_{i}")
+    ax_v.legend(ncol = 2,
+                   frameon = False)
+    ax_v.set_xlabel(r"$v^{UKF}$ realizations")

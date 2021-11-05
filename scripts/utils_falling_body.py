@@ -12,8 +12,7 @@ import unscented_transformation as ut
 import matplotlib.pyplot as plt
 import matplotlib
 
-font = {'family' : 'normal',
-        'size'   : 14}
+font = {'size': 14}
 
 matplotlib.rc('font', **font)
 
@@ -42,6 +41,20 @@ def hx(x, par):
 
 def fx_for_UT_gen_Q(sigmas, list_of_keys, t_span, x, par, w):
     
+    for i in range(len(list_of_keys)):
+        key = list_of_keys[i]
+        if not key in par:
+            raise KeyError("This key should be in par")
+        par[key] = sigmas[i]
+    yi = fx_ukf_ode(ode_model_plant,
+                    t_span,
+                    x,
+                    args_ode = (w, par)
+                    )
+    # print(yi)
+    return yi
+
+def fx_for_UT_gen_wbar_Q(sigmas, list_of_keys, t_span, x, par, w):
     for i in range(len(list_of_keys)):
         key = list_of_keys[i]
         if not key in par:
@@ -364,31 +377,185 @@ def get_lhs_points(dist_dict, N_lhs_dist = 10, plot_mc_samples = False, labels =
             except:
                 axi.legend()
     return x_lhs, sample, fig, ax
+def get_mc_points(dist_dict, N_mc_dist = 1000, plot_mc_samples = False, labels = None):
+    """
+    
 
-def get_Q_from_lhs(par_lhs, x0, t_span, w_plant):
-    N_mc = list(par_lhs.values())[0].shape[0] #the number of MC samples (or LHS)
+    Parameters
+    ----------
+    dist_dict : TYPE dict
+        DESCRIPTION. {"a": scipy.stats.gamma(alpha, beta),
+                      "b": scipy.stats.lognormal(mu, cov)}
+    N_mc_dist : TYPE, optional int
+        DESCRIPTION. The default is 1000. number of MC samples
+    plot_mc_samples : TYPE, optional bool
+        DESCRIPTION. The default is False. Plot or not
+    labels : TYPE, optional list
+        DESCRIPTION. The default is None.
+
+    Returns
+    -------
+    x_lhs : TYPE
+        DESCRIPTION.
+    sample : TYPE
+        DESCRIPTION.
+    fig : TYPE
+        DESCRIPTION.
+    ax : TYPE
+        DESCRIPTION.
+
+    """
+    dim_dist = len(dist_dict)
+    x_mc = {}
+    i = 0
+    for key, dist in dist_dict.items():
+        x_mc[key] = dist.rvs(size = N_mc_dist)
+        # x_rand[key] = dist.rvs(size = N_mc_dist)
+        i += 1
+    if not plot_mc_samples:
+        fig_pdf, ax_pdf = (None, None)
+    else: #do plot
+        if labels is None:
+            labels = ["" for k in range(dim_dist)]
+        
+        #A plot of how the points distribute in the pdf of the dist
+        fig_pdf, ax_pdf = plt.subplots(dim_dist, 1)
+        if dim_dist == 1:
+            ax_pdf = [ax_pdf]
+        # labels = [r"$\rho$ $[kg/m^3]$", "d [m]"]
+        line_color = []
+        i = 0
+        for key, dist in dist_dict.items(): #plot the pdf of each distribution
+            x_dummy = np.linspace(dist.ppf(.001), dist.ppf(.999), 100)    
+            l = ax_pdf[i].plot(x_dummy, dist.pdf(x_dummy), label = "pdf")
+            ax_pdf[i].scatter(x_mc[key], np.zeros(N_mc_dist), 
+                          label = "MC",
+                          marker = "x")
+            # ax_pdf[i].scatter(x_rand[key], np.zeros(N_lhs_dist), label = "rvs")
+            ax_pdf[i].set_xlabel(labels[i])
+            ax_pdf[i].set_ylabel("pdf")
+            i += 1
+            
+        for axi in ax_pdf:
+            try:
+                axi[0].legend()
+            except:
+                axi.legend()
+    return x_mc, fig_pdf, ax_pdf
+
+# def get_wmean_Q_from_lhs(par_lhs, x0, t_span, w_plant, par_nom):
+#     x_nom = fx_ukf_ode(ode_model_plant, t_span, x0, args_ode = (w_plant, par_nom))
+#     N_mc = list(par_lhs.values())[0].shape[0] #the number of MC samples (or LHS)
+#     dim_x = x0.shape[0]
+#     x_stoch = np.zeros((dim_x, N_mc))
+#     par_i = {}
+#     for i in range(N_mc):
+#         for key, val in par_lhs.items():
+#             par_i[key] = val[i]
+#         x_stoch[:, i] = fx_ukf_ode(ode_model_plant, t_span, x0, args_ode = (w_plant, par_i))
+    
+#     Q_lhs = np.cov(x_stoch)
+#     w_mean = np.mean(x_stoch - x_nom, axis = 1)
+#     return w_mean, Q_lhs
+
+def get_w_realizations_from_mc(par_mc, x0, t_span, w_plant, par_nom):
+    x_nom = fx_ukf_ode(ode_model_plant, t_span, x0, args_ode = (w_plant, par_nom))
+    N_mc = list(par_mc.values())[0].shape[0] #the number of MC samples (or LHS)
     dim_x = x0.shape[0]
-    x = np.zeros((dim_x, N_mc))
+    x_stoch = np.zeros((dim_x, N_mc))
     par_i = {}
     for i in range(N_mc):
-        for key, val in par_lhs.items():
+        for key, val in par_mc.items():
             par_i[key] = val[i]
-        x[:, i] = fx_ukf_ode(ode_model_plant, t_span, x0, args_ode = (w_plant, par_i))
-    
-    Q_lhs = np.cov(x)
-    return Q_lhs
+        x_stoch[:, i] = fx_ukf_ode(ode_model_plant, t_span, x0, args_ode = (w_plant, par_i))
+    w_stoch = x_stoch - x_nom.reshape(-1,1)
+    return w_stoch
 
-def get_R_from_lhs(par_lhs, x, dim_y):
-    N_mc = list(par_lhs.values())[0].shape[0] #the number of MC samples (or LHS)
-    y = np.zeros((dim_y, N_mc))
+def get_wmean_Q_from_mc(par_mc, x0, t_span, w_plant, par_nom):
+    
+    w_stoch = get_w_realizations_from_mc(par_mc, x0, t_span, w_plant, par_nom)
+    w_mean = np.mean(w_stoch, axis = 1)
+    Q = np.cov(w_stoch)
+    return w_mean, Q
+
+def get_wmode_Q_from_mc(par_mc, x0, t_span, w_plant, par_nom, nbins = 20):
+    
+    dim_x = x0.shape[0]
+    w_mode = np.zeros(dim_x)
+    w_stoch = get_w_realizations_from_mc(par_mc, x0, t_span, w_plant, par_nom)
+    #find the mode by maximizing the histogram values
+    for i in range(dim_x):
+        hist, bin_edges = np.histogram(w_stoch[i, :], bins = nbins)
+        idx = np.argmax(hist) #returns the index where there are most samples in the bin
+        mode_limits = np.array([bin_edges[idx], bin_edges[idx+1]]) #the mode is somewhere within these limits
+        w_mode[i] = np.mean(mode_limits)
+    Q = np.cov(w_stoch)
+    return w_mode, Q
+
+
+# def get_vmean_R_from_lhs(par_lhs, x, dim_y):
+#     N_mc = list(par_lhs.values())[0].shape[0] #the number of MC samples (or LHS)
+#     y = np.zeros((dim_y, N_mc))
+#     par_i = {}
+#     for i in range(N_mc):
+#         for key, val in par_lhs.items():
+#             par_i[key] = val[i]
+#         y[:, i] = hx(x, par_i)
+#     v_lhs = np.mean(y, axis = 1)
+#     R_lhs = np.cov(y)
+#     return v_lhs, R_lhs
+
+def get_v_realizations_from_mc(par_mc, x, dim_y, par_nom):
+    y_nom = hx(x, par_nom)
+    N_mc = list(par_mc.values())[0].shape[0] #the number of MC samples (or LHS)
+    y_stoch = np.zeros((dim_y, N_mc))
     par_i = {}
     for i in range(N_mc):
-        for key, val in par_lhs.items():
+        for key, val in par_mc.items():
             par_i[key] = val[i]
-        y[:, i] = hx(x, par_i)
+        y_stoch[:, i] = hx(x, par_i)
+    v_stoch = y_stoch - y_nom.reshape(-1,1)
+    return v_stoch
+
+def get_vmean_R_from_mc(par_mc, x, dim_y, par_nom):
     
-    R_lhs = np.cov(y)
-    return R_lhs
+    v_stoch = get_v_realizations_from_mc(par_mc, x, dim_y, par_nom)
+    v_mean = np.mean(v_stoch, axis = 1)
+    R = np.cov(v_stoch)
+    return v_mean, R
+
+def get_vmode_R_from_mc(par_mc, x, dim_y, par_nom, nbins = 20):
+    
+    v_stoch = get_v_realizations_from_mc(par_mc, x, dim_y, par_nom)
+    hist, bin_edges = np.histogram(v_stoch, bins = nbins)
+    idx = np.argmax(hist) #returns the index where there are most samples in the bin
+    mode_limits = np.array([bin_edges[idx], bin_edges[idx+1]]) #the mode is somewhere within these limits
+    v_mode = np.mean(mode_limits)
+    R = np.cov(v_stoch)
+    return v_mode, R
+
+
+
+
+# def get_ys_by_MC(par_mc, x, dim_y):
+#     N_mc = list(par_mc.values())[0].shape[0] #the number of MC samples (or LHS)
+#     y = np.zeros((dim_y, N_mc))
+#     par_i = {}
+#     for i in range(N_mc):
+#         for key, val in par_mc.items():
+#             par_i[key] = val[i]
+#         y[:, i] = hx(x, par_i)
+    
+#     return y
+
+# def get_vmean_R_by_mc(par_mc, x, dim_y):
+#     y_mat = get_ys_by_MC(par_mc, x, dim_y)
+#     v_mean = np.mean(y_mat, axis = 1)
+#     R = np.cov(y_mat)
+#     # print(f"y_mat: {y_mat.shape}\n",
+#     #       f"v_mean: {v_mean.shape}\n",
+#     #       f"R: {R}\n")
+#     return v_mean, R
 
 def venturi_eq(q, rho, d, D, C, eps):
     beta = d/D
