@@ -31,7 +31,7 @@ import utils_falling_body as utils_fb
 
 
 #%% For running the sim N times
-N = 6
+N = 6 #this is how many times to repeat each iteration
 dim_x = 3
 j_valappil = np.zeros((dim_x, N))
 j_valappil_lhs = np.zeros((dim_x, N))
@@ -112,7 +112,7 @@ while Ni < N:
                                                                               labels = list(par_true_hx.keys())
                                                                               )
         #%% Define samples for MC, random sampling
-        N_mc_dist = int(1e2)
+        N_mc_dist = int(5e2)
         
         par_mc_fx, fig_mc, ax_mc = utils_fb.get_mc_points(par_dist_fx, 
                                                             N_mc_dist = N_mc_dist, 
@@ -126,7 +126,7 @@ while Ni < N:
                                                             labels = list(par_true_hx.keys())
                                                              )
         #%% Define samples for MCm, random sampling
-        N_mcm_dist = int(1e2)
+        N_mcm_dist = int(5e2)
         
         par_mcm_fx, fig_mcm, ax_mcm = utils_fb.get_mc_points(par_dist_fx, 
                                                             N_mc_dist = N_mcm_dist, 
@@ -486,7 +486,7 @@ while Ni < N:
             
             #Adaptive R by MCm (mode adjusted)
             x_prior_mcm = copy.deepcopy(kf_mc.x_prior)
-            v_mode_mcm, R_mcm = utils_fb.get_vmode_R_from_mc(par_mc_hx.copy(), 
+            v_mode_mcm, R_mcm = utils_fb.get_vmode_R_from_mc(par_mcm_hx.copy(), 
                                                       x_prior_mcm, 
                                                       dim_y,
                                                       par_kf_hx)
@@ -593,9 +593,9 @@ for i in range(dim_x):
 
 #%% Violin plot of cost function
 if N >= 5: #only plot this if we have done some iterations
-    fig_v, ax_v = plt.subplots(dim_x,1)
-    # labels_violin = ["UT", "LHS"]
+    fig_v, ax_v = plt.subplots(dim_x,1, sharex = True)
     labels_violin = ["GenUT", "LHS", "MC", "MCm", "Fixed"]
+    # labels_violin = ["GenUT", "LHS", "MC", "Fixed"]
     def set_axis_style(ax, labels):
         ax.xaxis.set_tick_params(direction='out')
         ax.xaxis.set_ticks_position('bottom')
@@ -604,15 +604,38 @@ if N >= 5: #only plot this if we have done some iterations
         ax.set_xlim(0.25, len(labels) + 0.75)
         # ax.set_xlabel(r'Method for tuning $Q_k, R_k$')
     for i in range(dim_x):
+        data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_mc[i], j_valappil_mcm[i], j_valappil_qf[i]]).T
+        # data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_mc[i], j_valappil_qf[i]]).T
+        print("---cost of x_{i}---\n",
+              f"mean = {data.mean(axis = 0)}\n",
+              f"std = {data.std(axis = 0)}")
+        ax_v[i].violinplot(data)#, j_valappil_qf])
+        ax_v[i].set_ylabel(fr"Cost $x_{i+1}$ [-]")
+    set_axis_style(ax_v[i], labels_violin)
+    ax_v[-1].set_xlabel(r'Method for tuning $Q_k, R_k$')
+        # fig_v.suptitle(f"Cost function distribution for N = {N} iterations")
+
+#%% Violin plot of cost function v2
+if N >= 5: #only plot this if we have done some iterations
+    fig_v2, ax_v2 = plt.subplots(1,1)
+    import matplotlib.patches as patches
+    # labels_violin = ["UT", "LHS"]
+    labels_violin = ["GenUT", "LHS", "MC", "MCm", "Fixed"]
+    legend_elements = []
+    for i in range(dim_x):
         # data = np.vstack([j_valappil[i], j_valappil_lhs[i]]).T
         data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_mc[i], j_valappil_mcm[i], j_valappil_qf[i]]).T
         print("---cost of x_{i}---\n",
               f"mean = {data.mean(axis = 0)}\n",
               f"std = {data.std(axis = 0)}")
-        ax_v[i].violinplot(data)#, j_valappil_qf])
-        set_axis_style(ax_v[i], labels_violin)
-        ax_v[i].set_ylabel(fr"Cost $x_{i+1}$")
-    ax_v[-1].set_xlabel(r'Method for tuning $Q_k, R_k$')
+        l = ax_v2.violinplot(data)#, label = rf"$x_{i}$")#, j_valappil_qf])
+    #     patch= ax_v2.add_patch(patches.Rectangle((.5, .5), 0.5, 0.5,
+    # alpha=0.1,facecolor=l.get_fac,label='Label'))
+        legend_elements.append(patches.Patch(color=l["bodies"][0].get_facecolor(),label=rf"$x_{i}$"))
+    set_axis_style(ax_v2, labels_violin)
+    ax_v2.set_ylabel("Cost")
+    ax_v2.set_xlabel(r'Method for tuning $Q_k, R_k$')
+    ax_v2.legend(handles = legend_elements, frameon = False, loc = "center right")
         # fig_v.suptitle(f"Cost function distribution for N = {N} iterations")
 
 
