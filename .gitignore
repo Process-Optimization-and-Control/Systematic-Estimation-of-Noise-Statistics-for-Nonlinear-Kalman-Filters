@@ -1,7 +1,7 @@
 /data
 /plots
 /literature
-/scripts/main_ip.py
+/scriptsWorkingDir
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
