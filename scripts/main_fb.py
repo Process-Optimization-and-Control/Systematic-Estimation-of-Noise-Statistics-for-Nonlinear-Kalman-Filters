@@ -29,9 +29,10 @@ import sigma_points_classes as spc
 import unscented_transformation as ut
 import utils_falling_body as utils_fb
 
+#test
 
 #%% For running the sim N times
-N = 6 #this is how many times to repeat each iteration
+N = 1 #this is how many times to repeat each iteration
 dim_x = 3
 j_valappil = np.zeros((dim_x, N))
 j_valappil_lhs = np.zeros((dim_x, N))
@@ -541,11 +542,12 @@ while Ni < N:
         
         Ni += 1
         rand_seed += 1
-        if (Ni%5 == 0): #print every 5th iteration                                                               
+        if (Ni%1 == 0): #print every 5th iteration                                                               
             print(f"End of iteration {Ni}/{N}")
     except BaseException as e:
         print(e)
-        raise e
+        rand_seed += 1
+        # raise e
         continue
 # print("---par_fx after sim---\n",
 #               f"true: {par_true_fx}\n",
@@ -594,8 +596,8 @@ for i in range(dim_x):
 #%% Violin plot of cost function
 if N >= 5: #only plot this if we have done some iterations
     fig_v, ax_v = plt.subplots(dim_x,1, sharex = True)
-    labels_violin = ["GenUT", "LHS", "MC", "MCm", "Fixed"]
-    # labels_violin = ["GenUT", "LHS", "MC", "Fixed"]
+    # labels_violin = ["GenUT", "LHS", "MC", "MCm", "Fixed"]
+    labels_violin = ["GenUT", "LHS", "MC", "Fixed"]
     def set_axis_style(ax, labels):
         ax.xaxis.set_tick_params(direction='out')
         ax.xaxis.set_ticks_position('bottom')
@@ -604,8 +606,8 @@ if N >= 5: #only plot this if we have done some iterations
         ax.set_xlim(0.25, len(labels) + 0.75)
         # ax.set_xlabel(r'Method for tuning $Q_k, R_k$')
     for i in range(dim_x):
-        data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_mc[i], j_valappil_mcm[i], j_valappil_qf[i]]).T
-        # data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_mc[i], j_valappil_qf[i]]).T
+        # data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_mc[i], j_valappil_mcm[i], j_valappil_qf[i]]).T
+        data = np.vstack([j_valappil[i], j_valappil_lhs[i], j_valappil_mc[i], j_valappil_qf[i]]).T
         print("---cost of x_{i}---\n",
               f"mean = {data.mean(axis = 0)}\n",
               f"std = {data.std(axis = 0)}")
